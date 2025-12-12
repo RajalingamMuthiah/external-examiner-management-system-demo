@@ -22,6 +22,15 @@ require_once __DIR__ . '/includes/security.php';
 require_once __DIR__ . '/config/db.php';
 require_once __DIR__ . '/includes/functions.php';
 
+// Check profile completion - redirect if college/department not set
+require_once __DIR__ . '/includes/profile_check.php';
+
+// Privacy context for all HOD dashboard logic
+$currentUserId = $_SESSION['user_id'] ?? get_current_user_id();
+$currentUserRole = normalize_role($_SESSION['role'] ?? 'hod');
+$currentUserCollege = $_SESSION['college_id'] ?? null;
+$currentUserDept = $_SESSION['department_id'] ?? null;
+
 // SECURITY: Enforce authentication and role-based access
 require_auth();
 require_role(['hod', 'head', 'hod_incharge', 'admin'], true);
@@ -48,55 +57,98 @@ $currentUserCollege = $userInfo['college_name'] ?? '';
 $currentUserDept = $currentUserCollege;
 $department = $currentUserDept;
 
-// PRIVACY: Fetch approved exams from OTHER colleges (NOT from HOD's own college)
-// SECURITY: Only show approved exams with future dates
-$examsStmt = $pdo->prepare("
-    SELECT 
-        e.id AS exam_id,
-        e.title AS exam_name,
-        e.subject,
-        e.exam_date,
-        e.status,
-        e.description,
-        e.department AS college_name,
-        u.name AS created_by_name,
-        e.created_at,
-        (SELECT COUNT(*) FROM assignments WHERE exam_id = e.id) AS total_assigned
-    FROM exams e
-    LEFT JOIN users u ON e.created_by = u.id
-    WHERE e.status = 'Approved'
-    AND e.department != ?  -- PRIVACY: Exclude own college
-    AND e.exam_date >= CURDATE()
-    ORDER BY e.exam_date ASC
-");
-$examsStmt->execute([$currentUserCollege]);
-$approvedExams = $examsStmt->fetchAll(PDO::FETCH_ASSOC);
+// Handle AJAX requests for approval actions
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    header('Content-Type: application/json');
+    
+    $action = $_POST['action'] ?? '';
+    $examId = (int)($_POST['exam_id'] ?? 0);
+    $comments = $_POST['comments'] ?? '';
+    $csrfToken = $_POST['csrf_token'] ?? '';
+    
+    // CSRF validation
+    if (!isset($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $csrfToken)) {
+        echo json_encode(['success' => false, 'message' => 'Invalid CSRF token']);
+        exit;
+    }
+    
+    // Validate exam ID
+    if ($examId <= 0) {
+        echo json_encode(['success' => false, 'message' => 'Invalid exam ID']);
+        exit;
+    }
+    
+    try {
+        if ($action === 'hod_approve_exam') {
+            // Call approveExam service function
+            $result = approveExam($pdo, $examId, $currentUserId, 'hod', $comments);
+            echo json_encode($result);
+            exit;
+        }
+        
+        if ($action === 'hod_reject_exam') {
+            // Validate that comments/reason is provided
+            if (empty(trim($comments))) {
+                echo json_encode(['success' => false, 'message' => 'Rejection reason is required']);
+                exit;
+            }
+            
+            // Call rejectExam service function (full rejection, not changes)
+            $result = rejectExam($pdo, $examId, $currentUserId, 'hod', $comments, false);
+            echo json_encode($result);
+            exit;
+        }
+        
+        if ($action === 'hod_request_changes') {
+            // Validate that changes requested are specified
+            if (empty(trim($comments))) {
+                echo json_encode(['success' => false, 'message' => 'Please specify what changes are needed']);
+                exit;
+            }
+            
+            // Call rejectExam service function with requestChanges=true
+            $result = rejectExam($pdo, $examId, $currentUserId, 'hod', $comments, true);
+            echo json_encode($result);
+            exit;
+        }
+        
+        echo json_encode(['success' => false, 'message' => 'Unknown action']);
+        exit;
+        
+    } catch (Exception $e) {
+        error_log('HOD approval error: ' . $e->getMessage());
+        echo json_encode(['success' => false, 'message' => 'Server error: ' . $e->getMessage()]);
+        exit;
+    }
+}
 
-// PRIVACY: Fetch exams from HOD's OWN college only
-// SECURITY: College-level data isolation
-$ownExamsStmt = $pdo->prepare("
-    SELECT 
-        e.id AS exam_id,
-        e.title AS exam_name,
-        e.subject,
-        e.exam_date,
-        e.status,
-        e.description,
-        e.department AS college_name,
-        u.name AS created_by_name,
-        e.created_at
-    FROM exams e
-    LEFT JOIN users u ON e.created_by = u.id
-    WHERE e.department = ?  -- PRIVACY: Only this college's exams
-    ORDER BY e.created_at DESC
-    LIMIT 10
-");
-$ownExamsStmt->execute([$currentUserCollege]);
-$ownExams = $ownExamsStmt->fetchAll(PDO::FETCH_ASSOC);
+// Use getVisibleExamsForUser() function for proper role-based filtering
+// This returns exams the HOD should see for their department
+$allExams = getVisibleExamsForUser($pdo, $currentUserId, $currentUserRole, $currentUserCollege, $currentUserDept);
+
+// Split into own exams, pending approvals, and approved exams from other colleges
+$ownExams = [];
+$pendingApprovals = [];
+$approvedExams = [];
+
+foreach ($allExams as $exam) {
+    // Check if exam is from HOD's own college/department
+    if ($exam['department'] === $currentUserCollege || $exam['creator_college'] === $currentUserCollege) {
+        $ownExams[] = $exam;
+        // Also check if exam needs HOD approval
+        if ($exam['status'] === 'submitted' || $exam['status'] === 'Submitted') {
+            $pendingApprovals[] = $exam;
+        }
+    } elseif ($exam['status'] === 'approved' || $exam['status'] === 'Approved') {
+        // Approved exams from other colleges
+        $approvedExams[] = $exam;
+    }
+}
 
 // Stats
 $totalApproved = count($approvedExams);
 $totalOwn = count($ownExams);
+$totalPending = count($pendingApprovals);
 
 // PRIVACY: Fetch faculty count for HOD's college only
 $facultyStmt = $pdo->prepare("
@@ -294,7 +346,15 @@ if (empty($_SESSION['csrf_token'])) {
                 </button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link rounded-3 active" id="available-tab" data-bs-toggle="tab" data-bs-target="#available" type="button">
+                <button class="nav-link rounded-3 active" id="approvals-tab" data-bs-toggle="tab" data-bs-target="#approvals" type="button">
+                    <i class="bi bi-clock-history me-2"></i>Pending Approvals
+                    <?php if ($totalPending > 0): ?>
+                        <span class="badge bg-danger ms-2"><?= $totalPending ?></span>
+                    <?php endif; ?>
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link rounded-3" id="available-tab" data-bs-toggle="tab" data-bs-target="#available" type="button">
                     <i class="bi bi-calendar-check me-2"></i>Available Exams
                 </button>
             </li>
@@ -307,6 +367,113 @@ if (empty($_SESSION['csrf_token'])) {
       </div>
 
         <div class="tab-content" id="hodTabsContent">
+          
+            <!-- Pending Approvals Tab -->
+            <div class="tab-pane fade show active" id="approvals" role="tabpanel">
+                <div class="bg-white p-6 rounded-lg shadow-md">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <div>
+                            <h3 class="text-2xl font-bold"><i class="bi bi-clock-history"></i> Exams Pending Your Approval</h3>
+                            <p class="text-muted">Review and approve exams submitted by teachers in your department</p>
+                        </div>
+                        <div>
+                            <span class="badge bg-warning text-dark" style="font-size: 1.1rem;"><?= $totalPending ?> Pending</span>
+                        </div>
+                    </div>
+
+                    <?php if ($totalPending > 0): ?>
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            <strong>Action Required:</strong> You have <?= $totalPending ?> exam<?= $totalPending > 1 ? 's' : '' ?> awaiting your approval as HOD.
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if (empty($pendingApprovals)): ?>
+                        <div class="text-center py-5">
+                            <i class="bi bi-check-circle" style="font-size: 4rem; color: #10b981;"></i>
+                            <p class="text-muted mt-3">All caught up! No exams pending approval.</p>
+                        </div>
+                    <?php else: ?>
+                        <div class="row">
+                            <?php foreach ($pendingApprovals as $exam): ?>
+                            <div class="col-md-12 mb-4">
+                                <div class="card border-warning">
+                                    <div class="card-header bg-warning bg-opacity-10">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <h5 class="mb-0"><strong><?= htmlspecialchars($exam['title']) ?></strong></h5>
+                                                <small class="text-muted">Submitted by: <?= htmlspecialchars($exam['created_by_name'] ?? 'Unknown') ?></small>
+                                            </div>
+                                            <span class="badge bg-warning text-dark">Awaiting Approval</span>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="row">
+                                            <div class="col-md-8">
+                                                <p class="mb-2"><i class="bi bi-book me-2"></i><strong>Subject:</strong> <?= htmlspecialchars($exam['subject'] ?? 'N/A') ?></p>
+                                                <p class="mb-2"><i class="bi bi-calendar me-2"></i><strong>Exam Date:</strong> <?= date('M d, Y', strtotime($exam['exam_date'])) ?></p>
+                                                <?php if (!empty($exam['description'])): ?>
+                                                <p class="mb-2"><i class="bi bi-file-text me-2"></i><strong>Description:</strong></p>
+                                                <p class="text-muted"><?= htmlspecialchars($exam['description']) ?></p>
+                                                <?php endif; ?>
+                                                
+                                                <!-- Show approval history if exists -->
+                                                <?php
+                                                $historyStmt = $pdo->prepare("SELECT * FROM approvals WHERE exam_id = ? ORDER BY created_at DESC");
+                                                $historyStmt->execute([$exam['id'] ?? $exam['exam_id']]);
+                                                $approvalHistory = $historyStmt->fetchAll(PDO::FETCH_ASSOC);
+                                                if (!empty($approvalHistory)):
+                                                ?>
+                                                <div class="mt-3">
+                                                    <p class="mb-2"><strong><i class="bi bi-clock-history me-2"></i>Approval History:</strong></p>
+                                                    <?php foreach ($approvalHistory as $history): ?>
+                                                    <div class="border-start border-3 border-info ps-3 mb-2">
+                                                        <small class="text-muted">
+                                                            <strong><?= ucfirst($history['decision']) ?></strong> by <?= htmlspecialchars($history['approver_role'] ?? 'Unknown') ?> 
+                                                            on <?= date('M d, Y H:i', strtotime($history['created_at'])) ?>
+                                                        </small>
+                                                        <?php if (!empty($history['comments'])): ?>
+                                                        <p class="small mb-0 mt-1"><em>"<?= htmlspecialchars($history['comments']) ?>"</em></p>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                    <?php endforeach; ?>
+                                                </div>
+                                                <?php endif; ?>
+                                            </div>
+                                            <div class="col-md-4">
+                                                <div class="border-start ps-3">
+                                                    <h6 class="text-muted mb-3">Take Action</h6>
+                                                    
+                                                    <button class="btn btn-success w-100 mb-2" 
+                                                            onclick="approveExam(<?= $exam['id'] ?? $exam['exam_id'] ?>, '<?= htmlspecialchars($exam['title']) ?>')">
+                                                        <i class="bi bi-check-circle me-2"></i>Approve Exam
+                                                    </button>
+                                                    
+                                                    <button class="btn btn-warning w-100 mb-2" 
+                                                            onclick="requestChanges(<?= $exam['id'] ?? $exam['exam_id'] ?>, '<?= htmlspecialchars($exam['title']) ?>')">
+                                                        <i class="bi bi-pencil me-2"></i>Request Changes
+                                                    </button>
+                                                    
+                                                    <button class="btn btn-danger w-100 mb-3" 
+                                                            onclick="rejectExam(<?= $exam['id'] ?? $exam['exam_id'] ?>, '<?= htmlspecialchars($exam['title']) ?>')">
+                                                        <i class="bi bi-x-circle me-2"></i>Reject Exam
+                                                    </button>
+                                                    
+                                                    <button class="btn btn-outline-primary w-100" 
+                                                            onclick="viewExamDetails(<?= $exam['id'] ?? $exam['exam_id'] ?>)">
+                                                        <i class="bi bi-eye me-2"></i>View Full Details
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
           
             <!-- Overview Tab (Original HOD Dashboard) -->
             <div class="tab-pane fade" id="overview" role="tabpanel">
@@ -400,7 +567,7 @@ if (empty($_SESSION['csrf_token'])) {
             </div>
 
             <!-- Available Exams from Other Colleges Tab -->
-            <div class="tab-pane fade show active" id="available" role="tabpanel">
+            <div class="tab-pane fade" id="available" role="tabpanel">
                 <div class="bg-white p-6 rounded-lg shadow-md">
                     <div class="d-flex justify-content-between align-items-center mb-4">
                         <div>
@@ -442,7 +609,7 @@ if (empty($_SESSION['csrf_token'])) {
                                     <?php foreach ($approvedExams as $exam): ?>
                                     <tr class="exam-card">
                                         <td>
-                                            <strong><?= htmlspecialchars($exam['exam_name']) ?></strong>
+                                            <strong><?= htmlspecialchars($exam['title']) ?></strong>
                                             <?php if ($exam['description']): ?>
                                             <br><small class="text-muted"><?= htmlspecialchars(substr($exam['description'], 0, 50)) ?>...</small>
                                             <?php endif; ?>
@@ -513,7 +680,7 @@ if (empty($_SESSION['csrf_token'])) {
                                 <tbody>
                                     <?php foreach ($ownExams as $exam): ?>
                                     <tr>
-                                        <td><strong><?= htmlspecialchars($exam['exam_name']) ?></strong></td>
+                                        <td><strong><?= htmlspecialchars($exam['title']) ?></strong></td>
                                         <td><span class="badge bg-info"><?= htmlspecialchars($exam['subject']) ?></span></td>
                                         <td><?= date('M d, Y', strtotime($exam['exam_date'])) ?></td>
                                         <td>
@@ -532,8 +699,13 @@ if (empty($_SESSION['csrf_token'])) {
                                         <td><?= date('M d, Y', strtotime($exam['created_at'])) ?></td>
                                         <td>
                                             <button class="btn btn-sm btn-outline-primary" onclick="viewExamDetails(<?= $exam['exam_id'] ?>)">
-                                                <i class="bi bi-eye"></i> View Details
+                                                <i class="bi bi-eye"></i> View
                                             </button>
+                                            <?php if ($exam['status'] === 'Approved' || $exam['status'] === 'approved'): ?>
+                                            <a href="manage_exam_invites.php?exam_id=<?= $exam['exam_id'] ?>" class="btn btn-sm btn-success">
+                                                <i class="bi bi-person-plus"></i> Invites
+                                            </a>
+                                            <?php endif; ?>
                                         </td>
                                     </tr>
                                     <?php endforeach; ?>
@@ -654,6 +826,109 @@ if (empty($_SESSION['csrf_token'])) {
     function nominateFaculty(examId) {
         alert(`Faculty nomination feature coming soon for exam ID ${examId}`);
         // TODO: Implement faculty nomination
+    }
+    
+    // HOD Approval Functions
+    function approveExam(examId, examTitle) {
+        if (!confirm(`Are you sure you want to APPROVE the exam: "${examTitle}"?`)) {
+            return;
+        }
+        
+        const comments = prompt('Optional approval comments (press OK to continue without comments):');
+        
+        const formData = new FormData();
+        formData.append('action', 'hod_approve_exam');
+        formData.append('exam_id', examId);
+        formData.append('comments', comments || '');
+        formData.append('csrf_token', csrfToken);
+        
+        fetch('hod_dashboard.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                alert('✓ Exam approved successfully!');
+                location.reload();
+            } else {
+                alert('Error: ' + (data.message || 'Failed to approve exam'));
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            alert('Network error. Please try again.');
+        });
+    }
+    
+    function rejectExam(examId, examTitle) {
+        const reason = prompt(`Please provide a reason for REJECTING the exam: "${examTitle}"`);
+        
+        if (!reason || reason.trim() === '') {
+            alert('Rejection reason is required.');
+            return;
+        }
+        
+        if (!confirm(`Confirm REJECTION of exam: "${examTitle}"?`)) {
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('action', 'hod_reject_exam');
+        formData.append('exam_id', examId);
+        formData.append('comments', reason);
+        formData.append('csrf_token', csrfToken);
+        
+        fetch('hod_dashboard.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                alert('Exam rejected. The creator has been notified.');
+                location.reload();
+            } else {
+                alert('Error: ' + (data.message || 'Failed to reject exam'));
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            alert('Network error. Please try again.');
+        });
+    }
+    
+    function requestChanges(examId, examTitle) {
+        const changes = prompt(`What changes are needed for the exam: "${examTitle}"?\n\nBe specific so the creator knows what to fix:`);
+        
+        if (!changes || changes.trim() === '') {
+            alert('Please specify what changes are needed.');
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('action', 'hod_request_changes');
+        formData.append('exam_id', examId);
+        formData.append('comments', changes);
+        formData.append('csrf_token', csrfToken);
+        
+        fetch('hod_dashboard.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                alert('Changes requested. The exam has been sent back to the creator.');
+                location.reload();
+            } else {
+                alert('Error: ' + (data.message || 'Failed to request changes'));
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            alert('Network error. Please try again.');
+        });
     }
     
     // HOD Module Loader

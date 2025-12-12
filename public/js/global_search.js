@@ -211,7 +211,7 @@ window.GlobalSearch = {
      * Render exam result item
      */
     renderExamItem: function(exam, query) {
-        const highlighted = this.highlightText(exam.exam_name || exam.title, query);
+        const highlighted = this.highlightText(exam.title, query);
         const statusClass = exam.status === 'Approved' ? 'success' : exam.status === 'Pending' ? 'warning' : 'danger';
         
         return `

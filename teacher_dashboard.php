@@ -22,6 +22,15 @@ require_once __DIR__ . '/includes/security.php';
 require_once __DIR__ . '/config/db.php';
 require_once __DIR__ . '/includes/functions.php';
 
+// Check profile completion - redirect if college/department not set
+require_once __DIR__ . '/includes/profile_check.php';
+
+// Privacy context for all teacher dashboard logic
+$currentUserId = $_SESSION['user_id'] ?? get_current_user_id();
+$currentUserRole = normalize_role($_SESSION['role'] ?? 'teacher');
+$currentUserCollege = $_SESSION['college_id'] ?? null;
+$currentUserDept = $_SESSION['department_id'] ?? null;
+
 // SECURITY: Enforce authentication and role-based access
 require_auth();
 require_role(['teacher', 'faculty'], true);
@@ -163,68 +172,25 @@ $hasAssignmentStmt = $pdo->prepare("SELECT COUNT(*) FROM assignments WHERE facul
 $hasAssignmentStmt->execute([$currentUserId]);
 $hasExistingAssignment = $hasAssignmentStmt->fetchColumn() > 0;
 
-// PRIVACY: Fetch available exams from OTHER colleges only (NOT from teacher's own college)
-// SECURITY: Only approved exams, future dates, no exams with faculty from same college
-// PRIVACY: Filter ensures teacher cannot see exams from their own institution
-$availableExamsStmt = $pdo->prepare("
-    SELECT 
-        e.id AS exam_id,
-        e.title AS exam_name,
-        e.subject,
-        e.exam_date,
-        e.status,
-        e.description,
-        e.department AS college_name,
-        u.name AS created_by_name,
-        e.created_at,
-        (SELECT COUNT(*) FROM assignments WHERE exam_id = e.id) AS total_assigned,
-        EXISTS(SELECT 1 FROM assignments WHERE exam_id = e.id AND faculty_id = ?) AS is_assigned,
-        EXISTS(
-            SELECT 1 FROM assignments a2
-            INNER JOIN users u2 ON a2.faculty_id = u2.id
-            WHERE a2.exam_id = e.id AND u2.college_name = ?
-        ) AS has_faculty_from_my_college
-    FROM exams e
-    LEFT JOIN users u ON e.created_by = u.id
-    WHERE e.status = 'Approved'
-    AND e.department != ?  -- PRIVACY: Exclude own college exams
-    AND e.exam_date >= CURDATE()
-    AND NOT EXISTS(
-        SELECT 1 FROM assignments a3
-        INNER JOIN users u3 ON a3.faculty_id = u3.id
-        WHERE a3.exam_id = e.id AND u3.college_name = ?  -- PRIVACY: Exclude if college already has faculty assigned
-    )
-    ORDER BY e.exam_date ASC
-");
-$availableExamsStmt->execute([$currentUserId, $currentUserCollege, $currentUserCollege, $currentUserCollege]);
+// Use getVisibleExamsForUser() function for proper role-based filtering
+$allExams = getVisibleExamsForUser($pdo, $currentUserId, $currentUserRole, $currentUserCollege, $currentUserDept);
+
+// Split exams into assigned and available based on exam_source field
+$assignedExams = [];
+$availableExams = [];
+
+foreach ($allExams as $exam) {
+    if (isset($exam['exam_source']) && $exam['exam_source'] === 'assigned') {
+        $assignedExams[] = $exam;
+    } elseif (isset($exam['exam_source']) && $exam['exam_source'] === 'available') {
+        $availableExams[] = $exam;
+    }
+}
 
 // PRIVACY: If teacher has an assignment, hide ALL available exams (one-exam-per-teacher rule)
 if ($hasExistingAssignment) {
     $availableExams = [];
-} else {
-    $availableExams = $availableExamsStmt->fetchAll(PDO::FETCH_ASSOC);
 }
-
-// PRIVACY: Fetch ONLY this teacher's assigned exams (filtered by faculty_id)
-// SECURITY: No other teacher's assignments will be visible
-$assignedExamsStmt = $pdo->prepare("
-    SELECT 
-        e.id AS exam_id,
-        e.title AS exam_name,
-        e.subject,
-        e.exam_date,
-        e.status AS exam_status,
-        e.department AS college_name,
-        a.assigned_at,
-        a.role as assignment_role,
-        a.status as assignment_status
-    FROM assignments a
-    JOIN exams e ON a.exam_id = e.id
-    WHERE a.faculty_id = ?  -- PRIVACY: Only THIS teacher's assignments
-    ORDER BY e.exam_date ASC
-");
-$assignedExamsStmt->execute([$currentUserId]);
-$assignedExams = $assignedExamsStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Stats
 $totalAvailable = count($availableExams);
@@ -459,7 +425,9 @@ $csrfToken = get_csrf_token();
                             <div class="card exam-card h-100">
                                 <div class="card-body">
                                     <div class="d-flex justify-content-between align-items-start mb-2">
-                                        <h5 class="card-title mb-0"><?= htmlspecialchars($exam['exam_name']) ?></h5>
+                                        <h5 class="card-title mb-0"><?= htmlspecialchars($exam['title']) ?></h5>
+                                                <h5 class="card-title mb-0"><?= htmlspecialchars($exam['title']) ?></h5>
+                                            <h5 class="card-title mb-0"><?= htmlspecialchars($exam['title']) ?></h5>
                                         <?php if ($exam['is_assigned']): ?>
                                             <span class="badge bg-success badge-custom">Already Assigned</span>
                                         <?php endif; ?>
@@ -542,7 +510,9 @@ $csrfToken = get_csrf_token();
                             <tbody>
                                 <?php foreach ($assignedExams as $exam): ?>
                                 <tr>
-                                    <td><strong><?= htmlspecialchars($exam['exam_name']) ?></strong></td>
+                                    <td><strong><?= htmlspecialchars($exam['title']) ?></strong></td>
+                                            <td><strong><?= htmlspecialchars($exam['title']) ?></strong></td>
+                                        <td><strong><?= htmlspecialchars($exam['title']) ?></strong></td>
                                     <td><?= htmlspecialchars($exam['college_name']) ?></td>
                                     <td><span class="badge bg-info"><?= htmlspecialchars($exam['subject']) ?></span></td>
                                     <td><?= date('M d, Y', strtotime($exam['exam_date'])) ?></td>

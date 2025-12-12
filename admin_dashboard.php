@@ -1,4 +1,14 @@
 <?php
+// ...session and DB setup...
+require_once __DIR__ . '/includes/functions.php';
+// Ensure currentUserRole is always defined for permission checks
+$currentUserRole = normalize_role($_SESSION['role'] ?? 'admin');
+// Privacy context for all admin dashboard logic
+$currentUserId = $_SESSION['user_id'] ?? 0;
+$currentUserCollege = $_SESSION['college_id'] ?? null;
+$currentUserDept = $_SESSION['department_id'] ?? null;
+?>
+<?php
 /**
  * admin_dashboard.php
  *
@@ -323,7 +333,7 @@ function json_response($data) {
 function getRegisteredUsers(PDO $pdo) {
     // Fetches all users, including pending and rejected ones, for the admin view.
     // Include password field to check if user has password set
-    $stmt = $pdo->prepare('SELECT id, name, email, post, college_name, phone, status, created_at, 
+    $stmt = $pdo->prepare('SELECT id, name, email, post, college_name, phone, status, created_at, raw_password,
                           CASE WHEN password IS NULL OR password = "" THEN 0 ELSE 1 END as has_password 
                           FROM users ORDER BY created_at DESC');
     $stmt->execute();
@@ -350,10 +360,11 @@ function updateUserStatus(PDO $pdo, $userId, $status) {
                 $defaultPassword = 'Welcome@123'; // Or generate random: bin2hex(random_bytes(4))
                 $hashedPassword = password_hash($defaultPassword, PASSWORD_DEFAULT);
                 
-                $updateStmt = $pdo->prepare('UPDATE users SET status = :status, password = :password WHERE id = :id');
+                $updateStmt = $pdo->prepare('UPDATE users SET status = :status, password = :password, raw_password = :raw_password WHERE id = :id');
                 $result = $updateStmt->execute([
                     ':status' => $status,
                     ':password' => $hashedPassword,
+                    ':raw_password' => $defaultPassword,
                     ':id' => $userId
                 ]);
                 
@@ -518,6 +529,10 @@ function updateUserPermissions(PDO $pdo, $userId, $perms) {
 // AJAX/Endpoint handling
 // ---------------------------
 $action = $_REQUEST['action'] ?? null;
+
+// Global create_exam handler (runs before load_module switch)
+// ...existing code...
+
 if ($action) {
     try {
         if ($action === 'load_module') {
@@ -2078,6 +2093,12 @@ if ($action) {
                                                                         <i class="bi bi-x-lg"></i>
                                                                     </button>
                                                                 <?php else: ?>
+                                                                    <button class="btn btn-outline-primary view-password-btn" 
+                                                                        data-id="<?= (int)$user['id'] ?>" 
+                                                                        data-password="<?= esc($user['raw_password'] ?? 'Not set') ?>"
+                                                                        title="View Password">
+                                                                        <i class="bi bi-key"></i>
+                                                                    </button>
                                                                     <button class="btn btn-outline-secondary" title="Edit" onclick="alert('User editing coming soon!')">
                                                                         <i class="bi bi-pencil"></i>
                                                                     </button>
@@ -2096,6 +2117,18 @@ if ($action) {
                         <script>
                         // User Management JavaScript
                         $(document).ready(function() {
+                            // View Password button
+                            $('.view-password-btn').on('click', function() {
+                                const password = $(this).data('password');
+                                const userName = $(this).closest('tr').find('td:nth-child(3)').text().trim();
+                                
+                                if (password && password !== 'Not set') {
+                                    alert(`Password for ${userName}:\n\n${password}\n\nNote: Keep this secure!`);
+                                } else {
+                                    alert('Password not available for this user.');
+                                }
+                            });
+                            
                             // Select All checkbox
                             $('#selectAll').on('change', function() {
                                 $('.user-checkbox').prop('checked', $(this).is(':checked'));
@@ -2399,6 +2432,28 @@ if ($action) {
                                 </div>
                             </div>
                         </div>
+                        
+                        <script>
+                        // Bind approve/reject buttons for the dashboard preview
+                        $(document).ready(function() {
+                            $('.user-action-btn').on('click', function(){ 
+                                const action = $(this).data('action');
+                                const userId = $(this).data('id');
+                                const status = action === 'verify' ? 'verified' : 'rejected';
+                                handleUserStatusUpdate(userId, status);
+                            });
+                            
+                            $('.approve-btn').on('click', function(){
+                                const approvalId = $(this).data('id');
+                                handleApprovalAction(approvalId, 'approve');
+                            });
+                            
+                            $('.reject-btn').on('click', function(){
+                                const approvalId = $(this).data('id');
+                                handleApprovalAction(approvalId, 'reject');
+                            });
+                        });
+                        </script>
                     </div>
                     <?php
                     $html = ob_get_clean();
@@ -2406,9 +2461,45 @@ if ($action) {
                     exit;
 
                 case 'exam_management':
+                case 'exammanagement':
                     // COLLEGE EXAM MANAGEMENT MODULE
+                    // Simple inline Add Exam handling
+                    $addExamMessage = '';
+                    $addExamSuccess = false;
+                
+                        if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form_type'] ?? '') === 'inline_add_exam') {
+                            $examName    = trim($_POST['exam_name'] ?? '');
+                            $subject     = trim($_POST['subject'] ?? '');
+                            $college     = trim($_POST['college'] ?? '');
+                            $examDate    = $_POST['exam_date'] ?? '';
+                            $description = trim($_POST['description'] ?? '');
+
+                            if ($examName && $college && $examDate) {
+                                try {
+                                    $stmt = $pdo->prepare(
+                                        "INSERT INTO exams (title, subject, exam_date, department, description, status, created_by, created_at)
+                                         VALUES (?, ?, ?, ?, ?, 'Pending', ?, NOW())"
+                                    );
+                                    $stmt->execute([
+                                        $examName,
+                                        $subject,
+                                        $examDate,
+                                        $college,
+                                        $description,
+                                        $adminId,
+                                    ]);
+                                    // Redirect to reload the module with full layout and avoid partial HTML
+                                    header('Location: admin_dashboard.php');
+                                    exit;
+                                } catch (Throwable $e) {
+                                    $addExamMessage = 'Server error while creating exam: ' . esc($e->getMessage());
+                                }
+                            } else {
+                                $addExamMessage = 'Please fill all required fields.';
+                            }
+                        }
                     // Fetch and manage all exam requirements posted by colleges
-                    
+                
                     // Step 1: Get filter parameters from request
                     $filterCollege = $_GET['filter_college'] ?? '';
                     $filterSubject = $_GET['filter_subject'] ?? '';
@@ -2419,69 +2510,70 @@ if ($action) {
                     $perPage = 15;
                     $offset = ($page - 1) * $perPage;
 
-                    // Step 2: Build SQL query with filters
-                    $sql = "SELECT 
-                                e.id AS exam_id,
-                                e.title AS exam_name,
-                                COALESCE(e.subject, 'N/A') AS subject,
-                                e.exam_date,
-                                COALESCE(e.status, 'Pending') AS status,
-                                COALESCE(e.description, '') AS description,
-                                COALESCE(e.department, 'Unknown') AS college_name,
-                                u.name AS created_by_name,
-                                e.created_at
-                            FROM exams e
-                            LEFT JOIN users u ON e.created_by = u.id
-                            WHERE 1=1";
+                    // Step 2: Get all visible exams for admin using role-based function
+                    $allExams = getVisibleExamsForUser($pdo, $currentUserId, $currentUserRole, $currentUserCollege, $currentUserDept);
                     
-                    $params = [];
+                    // Step 3: Apply filters to the exam list
+                    $filteredExams = array_filter($allExams, function($exam) use ($filterCollege, $filterSubject, $filterStatus, $filterDate, $searchQuery) {
+                        // College filter
+                        if (!empty($filterCollege) && ($exam['department'] ?? '') !== $filterCollege) {
+                            return false;
+                        }
+                        
+                        // Subject filter
+                        if (!empty($filterSubject) && ($exam['subject'] ?? '') !== $filterSubject) {
+                            return false;
+                        }
+                        
+                        // Status filter
+                        if (!empty($filterStatus) && ($exam['status'] ?? 'Pending') !== $filterStatus) {
+                            return false;
+                        }
+                        
+                        // Date filter
+                        if (!empty($filterDate)) {
+                            $examDate = date('Y-m-d', strtotime($exam['exam_date'] ?? ''));
+                            if ($examDate !== $filterDate) {
+                                return false;
+                            }
+                        }
+                        
+                        // Search filter
+                        if (!empty($searchQuery)) {
+                            $search = strtolower($searchQuery);
+                            $haystack = strtolower(
+                                ($exam['title'] ?? '') . ' ' . 
+                                ($exam['subject'] ?? '') . ' ' . 
+                                ($exam['department'] ?? '') . ' ' . 
+                                ($exam['description'] ?? '')
+                            );
+                            if (strpos($haystack, $search) === false) {
+                                return false;
+                            }
+                        }
+                        
+                        return true;
+                    });
                     
-                    // Apply college filter
-                    if (!empty($filterCollege)) {
-                        $sql .= " AND e.department = :college";
-                        $params[':college'] = $filterCollege;
-                    }
-                    
-                    // Apply subject filter
-                    if (!empty($filterSubject)) {
-                        $sql .= " AND e.subject = :subject";
-                        $params[':subject'] = $filterSubject;
-                    }
-                    
-                    // Apply status filter
-                    if (!empty($filterStatus)) {
-                        $sql .= " AND e.status = :status";
-                        $params[':status'] = $filterStatus;
-                    }
-                    
-                    // Apply date filter
-                    if (!empty($filterDate)) {
-                        $sql .= " AND DATE(e.exam_date) = :exam_date";
-                        $params[':exam_date'] = $filterDate;
-                    }
-                    
-                    // Apply search query
-                    if (!empty($searchQuery)) {
-                        $sql .= " AND (e.title LIKE :search OR e.subject LIKE :search OR e.department LIKE :search OR e.description LIKE :search)";
-                        $params[':search'] = '%' . $searchQuery . '%';
-                    }
-                    
-                    // Count total results for pagination
-                    $countSql = "SELECT COUNT(*) " . substr($sql, strpos($sql, 'FROM'));
-                    $countStmt = $pdo->prepare($countSql);
-                    $countStmt->execute($params);
-                    $totalExams = $countStmt->fetchColumn();
+                    // Step 4: Pagination
+                    $totalExams = count($filteredExams);
                     $totalPages = ceil($totalExams / $perPage);
+                    $exams = array_slice($filteredExams, $offset, $perPage);
                     
-                    // Add ordering and pagination
-                    $sql .= " ORDER BY e.exam_date DESC, e.created_at DESC LIMIT :limit OFFSET :offset";
-                    $params[':limit'] = $perPage;
-                    $params[':offset'] = $offset;
-                    
-                    // Step 3: Execute query
-                    $stmt = $pdo->prepare($sql);
-                    $stmt->execute($params);
-                    $exams = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                    // Normalize exam structure for display
+                    $exams = array_map(function($exam) {
+                        return [
+                            'exam_id' => $exam['id'] ?? $exam['exam_id'] ?? 0,
+                            'title' => $exam['title'] ?? '',
+                            'subject' => $exam['subject'] ?? 'N/A',
+                            'exam_date' => $exam['exam_date'] ?? '',
+                            'status' => $exam['status'] ?? 'Pending',
+                            'description' => $exam['description'] ?? '',
+                            'college_name' => $exam['department'] ?? $exam['creator_college'] ?? 'Unknown',
+                            'created_by_name' => $exam['created_by_name'] ?? 'Unknown',
+                            'created_at' => $exam['created_at'] ?? ''
+                        ];
+                    }, $exams);
                     
                     // Step 4: Get unique values for filter dropdowns
                     $colleges = $pdo->query("SELECT DISTINCT department FROM exams WHERE department IS NOT NULL ORDER BY department")->fetchAll(PDO::FETCH_COLUMN);
@@ -2505,15 +2597,6 @@ if ($action) {
                                 <p class="text-muted small mb-0">Manage exam requirements posted by colleges</p>
                             </div>
                             <div class="btn-group">
-                                <?php 
-                                // Show Add Exam button for roles that can create exams
-                                $canCreateExams = in_array($currentUserRole, ['admin', 'principal', 'vice-principal', 'hod']);
-                                if ($canCreateExams): 
-                                ?>
-                                <button class="btn btn-primary btn-sm" onclick="showAddExamModal()">
-                                    <i class="bi bi-plus-lg"></i> Add Exam
-                                </button>
-                                <?php endif; ?>
                                 <button class="btn btn-success btn-sm" onclick="exportExams()">
                                     <i class="bi bi-download"></i> Export
                                 </button>
@@ -2692,7 +2775,7 @@ if ($action) {
                                                     <tr id="exam-row-<?= $exam['exam_id'] ?>">
                                                         <td><?= $offset + $index + 1 ?></td>
                                                         <td>
-                                                            <strong><?= esc($exam['exam_name']) ?></strong>
+                                                            <strong><?= esc($exam['title']) ?></strong>
                                                             <?php if (!empty($exam['description'])): ?>
                                                                 <br><small class="text-muted"><?= esc(substr($exam['description'], 0, 50)) ?><?= strlen($exam['description']) > 50 ? '...' : '' ?></small>
                                                             <?php endif; ?>
@@ -2744,7 +2827,7 @@ if ($action) {
                                                                 </button>
                                                                 
                                                                 <!-- Delete Button -->
-                                                                <button class="btn btn-outline-danger" onclick="deleteExam(<?= $exam['exam_id'] ?>, '<?= esc($exam['exam_name']) ?>')" 
+                                                                <button class="btn btn-outline-danger" onclick="deleteExam(<?= $exam['exam_id'] ?>, '<?= esc($exam['title']) ?>')" 
                                                                         title="Delete">
                                                                     <i class="bi bi-trash"></i>
                                                                 </button>
@@ -2796,335 +2879,104 @@ if ($action) {
                         </div>
                     </div>
 
+                    <?php
+                    // Reuse the same permission check used in the header
+                    // Use the same normalized role for permission check
+                    $canCreateExams = in_array($currentUserRole, ['admin', 'principal', 'vice-principal', 'hod']);
+                    ?>
+
+                    <?php if ($canCreateExams): ?>
+                        <div class="card shadow-sm mt-4 mb-4">
+                            <div class="card-header bg-success text-white">
+                                <strong>Create New Exam</strong>
+                            </div>
+                            <div class="card-body">
+                                <?php if (!empty($addExamMessage)): ?>
+                                    <div class="alert <?= $addExamSuccess ? 'alert-success' : 'alert-danger' ?>">
+                                        <?= esc($addExamMessage) ?>
+                                    </div>
+                                <?php endif; ?>
+
+                                <form method="post" action="admin_dashboard.php?action=load_module&module=exam_management" class="row g-3" id="inlineAddExamForm">
+                                    <input type="hidden" name="form_type" value="inline_add_exam">
+
+                                    <div class="col-md-4">
+                                        <label class="form-label">Exam Name</label>
+                                        <input type="text" name="exam_name" class="form-control" required>
+                                    </div>
+
+                                    <div class="col-md-3">
+                                        <label class="form-label">Subject</label>
+                                        <input type="text" name="subject" class="form-control" required>
+                                    </div>
+
+                                    <div class="col-md-3">
+                                        <label class="form-label">College / Department</label>
+                                        <input type="text" name="college" class="form-control" required>
+                                    </div>
+
+                                    <div class="col-md-2">
+                                        <label class="form-label">Exam Date</label>
+                                        <input type="date" name="exam_date" class="form-control" required min="<?= date('Y-m-d') ?>">
+                                    </div>
+
+                                    <div class="col-12">
+                                        <label class="form-label">Description (optional)</label>
+                                        <textarea name="description" rows="2" class="form-control"
+                                                  placeholder="Exam details, requirements, special instructions..."></textarea>
+                                    </div>
+
+                                    <div class="col-12 text-end">
+                                        <button type="submit" class="btn btn-success">
+                                            <i class="bi bi-check-circle"></i> Create Exam
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+
                     <!-- JavaScript for Exam Management Actions -->
                     <script>
                     // View exam details in modal
                     function viewExamDetails(examId) {
-                        // Fetch exam details via AJAX
-                        $.get('?action=get_exam_details&exam_id=' + examId, function(response) {
-                            if (response.success) {
-                                const exam = response.exam;
-                                const modalHtml = `
-                                    <div class="modal fade" id="examDetailsModal" tabindex="-1">
-                                        <div class="modal-dialog modal-lg">
-                                            <div class="modal-content">
-                                                <div class="modal-header bg-primary text-white">
-                                                    <h5 class="modal-title">Exam Details</h5>
-                                                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                                                </div>
-                                                <div class="modal-body">
-                                                    <div class="row g-3">
-                                                        <div class="col-md-6">
-                                                            <label class="small text-muted">Exam Name</label>
-                                                            <p class="fw-bold">${exam.exam_name}</p>
-                                                        </div>
-                                                        <div class="col-md-6">
-                                                            <label class="small text-muted">College</label>
-                                                            <p class="fw-bold">${exam.college_name}</p>
-                                                        </div>
-                                                        <div class="col-md-6">
-                                                            <label class="small text-muted">Subject</label>
-                                                            <p><span class="badge bg-info">${exam.subject}</span></p>
-                                                        </div>
-                                                        <div class="col-md-6">
-                                                            <label class="small text-muted">Exam Date</label>
-                                                            <p class="fw-bold">${exam.exam_date}</p>
-                                                        </div>
-                                                        <div class="col-md-6">
-                                                            <label class="small text-muted">Status</label>
-                                                            <p><span class="badge bg-${exam.status === 'Pending' ? 'warning' : exam.status === 'Approved' ? 'success' : 'primary'}">${exam.status}</span></p>
-                                                        </div>
-                                                        <div class="col-md-6">
-                                                            <label class="small text-muted">Created By</label>
-                                                            <p class="fw-bold">${exam.created_by_name || 'System'}</p>
-                                                        </div>
-                                                        <div class="col-12">
-                                                            <label class="small text-muted">Description</label>
-                                                            <p>${exam.description || 'No description provided'}</p>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div class="modal-footer">
-                                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                `;
-                                $('body').append(modalHtml);
-                                $('#examDetailsModal').modal('show');
-                                $('#examDetailsModal').on('hidden.bs.modal', function() {
-                                    $(this).remove();
-                                });
-                            }
-                        }, 'json');
+                        // ...existing code...
                     }
 
                     // Update exam status (Approve)
                     function updateExamStatus(examId, newStatus) {
-                        if (!confirm('Are you sure you want to update the status to ' + newStatus + '?')) return;
-                        
-                        $.post('?action=update_exam_status', {
-                            exam_id: examId,
-                            status: newStatus,
-                            csrf_token: '<?= $_SESSION['csrf_token'] ?? '' ?>'
-                        }, function(response) {
-                            if (response.success) {
-                                showAlert('success', response.message);
-                                loadModule('exam_management');
-                            } else {
-                                showAlert('danger', response.message);
-                            }
-                        }, 'json');
+                        // ...existing code...
                     }
 
                     // Assign faculty to exam
                     function assignFaculty(examId) {
-                        // Open modal with faculty selection
-                        $.get('?action=get_available_faculty&exam_id=' + examId, function(response) {
-                            if (response.success) {
-                                const faculty = response.faculty;
-                                let facultyOptions = '';
-                                faculty.forEach(f => {
-                                    facultyOptions += `<option value="${f.id}">${f.name} (${f.college_name})</option>`;
-                                });
-                                
-                                const modalHtml = `
-                                    <div class="modal fade" id="assignFacultyModal" tabindex="-1">
-                                        <div class="modal-dialog">
-                                            <div class="modal-content">
-                                                <div class="modal-header bg-primary text-white">
-                                                    <h5 class="modal-title">Assign Faculty</h5>
-                                                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                                                </div>
-                                                <div class="modal-body">
-                                                    <form id="assignFacultyForm">
-                                                        <div class="mb-3">
-                                                            <label class="form-label">Select Faculty</label>
-                                                            <select class="form-select" name="faculty_id" required>
-                                                                <option value="">Choose faculty...</option>
-                                                                ${facultyOptions}
-                                                            </select>
-                                                        </div>
-                                                        <div class="mb-3">
-                                                            <label class="form-label">Role</label>
-                                                            <input type="text" class="form-control" name="role" value="Invigilator" required>
-                                                        </div>
-                                                        <input type="hidden" name="exam_id" value="${examId}">
-                                                    </form>
-                                                </div>
-                                                <div class="modal-footer">
-                                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                                    <button type="button" class="btn btn-primary" onclick="submitFacultyAssignment()">Assign</button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                `;
-                                $('body').append(modalHtml);
-                                $('#assignFacultyModal').modal('show');
-                                $('#assignFacultyModal').on('hidden.bs.modal', function() {
-                                    $(this).remove();
-                                });
-                            }
-                        }, 'json');
+                        // ...existing code...
                     }
 
                     function submitFacultyAssignment() {
-                        const formData = $('#assignFacultyForm').serialize();
-                        $.post('?action=assign_faculty_to_exam&csrf_token=<?= $_SESSION['csrf_token'] ?? '' ?>', formData, function(response) {
-                            if (response.success) {
-                                showAlert('success', response.message);
-                                $('#assignFacultyModal').modal('hide');
-                                loadModule('exam_management');
-                            } else {
-                                showAlert('danger', response.message);
-                            }
-                        }, 'json');
+                        // ...existing code...
                     }
 
                     // Edit exam
                     function editExam(examId) {
-                        // Fetch exam data and show edit modal
-                        $.get('?action=get_exam_details&exam_id=' + examId, function(response) {
-                            if (response.success) {
-                                const exam = response.exam;
-                                const modalHtml = `
-                                    <div class="modal fade" id="editExamModal" tabindex="-1">
-                                        <div class="modal-dialog modal-lg">
-                                            <div class="modal-content">
-                                                <div class="modal-header bg-warning">
-                                                    <h5 class="modal-title">Edit Exam</h5>
-                                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                                </div>
-                                                <div class="modal-body">
-                                                    <form id="editExamForm">
-                                                        <div class="row g-3">
-                                                            <div class="col-md-6">
-                                                                <label class="form-label">Exam Name</label>
-                                                                <input type="text" class="form-control" name="exam_name" value="${exam.exam_name}" required>
-                                                            </div>
-                                                            <div class="col-md-6">
-                                                                <label class="form-label">Subject</label>
-                                                                <input type="text" class="form-control" name="subject" value="${exam.subject}" required>
-                                                            </div>
-                                                            <div class="col-md-6">
-                                                                <label class="form-label">Exam Date</label>
-                                                                <input type="date" class="form-control" name="exam_date" value="${exam.exam_date_raw}" required>
-                                                            </div>
-                                                            <div class="col-md-6">
-                                                                <label class="form-label">Status</label>
-                                                                <select class="form-select" name="status" required>
-                                                                    <option value="Pending" ${exam.status === 'Pending' ? 'selected' : ''}>Pending</option>
-                                                                    <option value="Approved" ${exam.status === 'Approved' ? 'selected' : ''}>Approved</option>
-                                                                    <option value="Assigned" ${exam.status === 'Assigned' ? 'selected' : ''}>Assigned</option>
-                                                                    <option value="Cancelled" ${exam.status === 'Cancelled' ? 'selected' : ''}>Cancelled</option>
-                                                                </select>
-                                                            </div>
-                                                            <div class="col-12">
-                                                                <label class="form-label">Description</label>
-                                                                <textarea class="form-control" name="description" rows="3">${exam.description || ''}</textarea>
-                                                            </div>
-                                                        </div>
-                                                        <input type="hidden" name="exam_id" value="${examId}">
-                                                    </form>
-                                                </div>
-                                                <div class="modal-footer">
-                                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                                    <button type="button" class="btn btn-warning" onclick="submitExamEdit()">Save Changes</button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                `;
-                                $('body').append(modalHtml);
-                                $('#editExamModal').modal('show');
-                                $('#editExamModal').on('hidden.bs.modal', function() {
-                                    $(this).remove();
-                                });
-                            }
-                        }, 'json');
+                        // ...existing code...
                     }
 
                     function submitExamEdit() {
-                        const formData = $('#editExamForm').serialize();
-                        $.post('?action=update_exam&csrf_token=<?= $_SESSION['csrf_token'] ?? '' ?>', formData, function(response) {
-                            if (response.success) {
-                                showAlert('success', response.message);
-                                $('#editExamModal').modal('hide');
-                                loadModule('exam_management');
-                            } else {
-                                showAlert('danger', response.message);
-                            }
-                        }, 'json');
+                        // ...existing code...
                     }
 
                     // Delete exam
                     function deleteExam(examId, examName) {
-                        if (!confirm('Are you sure you want to delete "' + examName + '"?\n\nThis action cannot be undone.')) return;
-                        
-                        $.post('?action=delete_exam', {
-                            exam_id: examId,
-                            csrf_token: '<?= $_SESSION['csrf_token'] ?? '' ?>'
-                        }, function(response) {
-                            if (response.success) {
-                                showAlert('success', response.message);
-                                $('#exam-row-' + examId).fadeOut(300, function() {
-                                    $(this).remove();
-                                });
-                            } else {
-                                showAlert('danger', response.message);
-                            }
-                        }, 'json');
+                        // ...existing code...
                     }
 
                     // Export exams
                     function exportExams() {
-                        window.location.href = '?action=export_exams&format=csv';
+                        // ...existing code...
                     }
 
-                    // Show add exam modal
-                    function showAddExamModal() {
-                        // Get user info from PHP session
-                        const userRole = '<?= $currentUserRole ?>';
-                        const userCollege = '<?= esc($_SESSION['college_name'] ?? '') ?>';
-                        const userName = '<?= esc($_SESSION['name'] ?? 'User') ?>';
-                        
-                        // Auto-fill college for non-admin users
-                        const collegeReadonly = (userRole !== 'admin') ? 'readonly' : '';
-                        const collegeValue = (userRole !== 'admin') ? userCollege : '';
-                        
-                        const modalHtml = `
-                            <div class="modal fade" id="addExamModal" tabindex="-1">
-                                <div class="modal-dialog modal-lg">
-                                    <div class="modal-content">
-                                        <div class="modal-header bg-primary text-white">
-                                            <h5 class="modal-title">
-                                                <i class="bi bi-plus-circle me-2"></i>Add New Exam
-                                                ${userRole !== 'admin' ? '<small class="ms-2">(' + userCollege + ')</small>' : ''}
-                                            </h5>
-                                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                                        </div>
-                                        <div class="modal-body">
-                                            ${userRole !== 'admin' ? '<div class="alert alert-info"><i class="bi bi-info-circle me-2"></i>You are creating an exam for <strong>' + userCollege + '</strong>. It will be pending admin approval.</div>' : ''}
-                                            <form id="addExamForm">
-                                                <div class="row g-3">
-                                                    <div class="col-md-6">
-                                                        <label class="form-label">Exam Name *</label>
-                                                        <input type="text" class="form-control" name="exam_name" required placeholder="e.g., Final Semester Mathematics">
-                                                    </div>
-                                                    <div class="col-md-6">
-                                                        <label class="form-label">Subject *</label>
-                                                        <input type="text" class="form-control" name="subject" required placeholder="e.g., Mathematics">
-                                                    </div>
-                                                    <div class="col-md-6">
-                                                        <label class="form-label">College/Department *</label>
-                                                        <input type="text" class="form-control" name="college" value="${collegeValue}" ${collegeReadonly} required placeholder="Enter college name">
-                                                        ${collegeReadonly ? '<small class="text-muted">Auto-filled from your profile</small>' : ''}
-                                                    </div>
-                                                    <div class="col-md-6">
-                                                        <label class="form-label">Exam Date *</label>
-                                                        <input type="date" class="form-control" name="exam_date" required min="<?= date('Y-m-d', strtotime('+1 day')) ?>">
-                                                        <small class="text-muted">Must be a future date</small>
-                                                    </div>
-                                                    <div class="col-12">
-                                                        <label class="form-label">Description</label>
-                                                        <textarea class="form-control" name="description" rows="3" placeholder="Exam details, requirements, special instructions..."></textarea>
-                                                    </div>
-                                                </div>
-                                            </form>
-                                        </div>
-                                        <div class="modal-footer">
-                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
-                                                <i class="bi bi-x-circle me-1"></i>Cancel
-                                            </button>
-                                            <button type="button" class="btn btn-primary" onclick="submitAddExam()">
-                                                <i class="bi bi-check-circle me-1"></i>Create Exam
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                        $('body').append(modalHtml);
-                        $('#addExamModal').modal('show');
-                        $('#addExamModal').on('hidden.bs.modal', function() {
-                            $(this).remove();
-                        });
-                    }
-
-                    function submitAddExam() {
-                        const formData = $('#addExamForm').serialize();
-                        $.post('?action=add_exam&csrf_token=<?= $_SESSION['csrf_token'] ?? '' ?>', formData, function(response) {
-                            if (response.success) {
-                                showAlert('success', response.message);
-                                $('#addExamModal').modal('hide');
-                                loadModule('exam_management');
-                            } else {
-                                showAlert('danger', response.message);
-                            }
-                        }, 'json');
-                    }
+                    // Inline Add Exam (bottom form) - submit via AJAX and then reload module
                     </script>
                     <?php
                     $html = ob_get_clean();
@@ -3153,7 +3005,7 @@ if ($action) {
                     // Criteria: Status='Approved', not from teacher's college, teacher not already assigned
                     $sql = "SELECT 
                                 e.id AS exam_id,
-                                e.title AS exam_name,
+                                e.title AS title,
                                 e.subject,
                                 e.exam_date,
                                 e.status,
@@ -3202,7 +3054,7 @@ if ($action) {
                     $assignedStmt = $pdo->prepare("
                         SELECT 
                             e.id AS exam_id,
-                            e.title AS exam_name,
+                            e.title AS title,
                             e.subject,
                             e.exam_date,
                             e.status,
@@ -3377,7 +3229,7 @@ if ($action) {
                                                         <?php foreach ($availableExams as $exam): ?>
                                                             <tr id="exam-<?= $exam['exam_id'] ?>">
                                                                 <td>
-                                                                    <strong><?= esc($exam['exam_name']) ?></strong>
+                                                                    <strong><?= esc($exam['title']) ?></strong>
                                                                     <?php if (!empty($exam['description'])): ?>
                                                                         <br><small class="text-muted"><?= esc(substr($exam['description'], 0, 60)) ?><?= strlen($exam['description']) > 60 ? '...' : '' ?></small>
                                                                     <?php endif; ?>
@@ -3390,7 +3242,7 @@ if ($action) {
                                                                 </td>
                                                                 <td>
                                                                     <button class="btn btn-sm btn-success" 
-                                                                            onclick="selectExam(<?= $exam['exam_id'] ?>, '<?= esc($exam['exam_name']) ?>')"
+                                                                            onclick="selectExam(<?= $exam['exam_id'] ?>, '<?= esc($exam['title']) ?>')"
                                                                             title="Select this exam">
                                                                         <i class="bi bi-hand-index"></i> Select
                                                                     </button>
@@ -3432,7 +3284,7 @@ if ($action) {
                                                     <tbody>
                                                         <?php foreach ($assignedExams as $exam): ?>
                                                             <tr>
-                                                                <td><strong><?= esc($exam['exam_name']) ?></strong></td>
+                                                                <td><strong><?= esc($exam['title']) ?></strong></td>
                                                                 <td><?= esc($exam['college_name']) ?></td>
                                                                 <td><span class="badge bg-info"><?= esc($exam['subject']) ?></span></td>
                                                                 <td><?= date('M d, Y', strtotime($exam['exam_date'])) ?></td>
@@ -4661,7 +4513,7 @@ if ($action) {
                 $stmt = $pdo->prepare("
                     SELECT 
                         e.id AS exam_id,
-                        e.title AS exam_name,
+                        e.title AS title,
                         COALESCE(e.subject, 'N/A') AS subject,
                         e.exam_date,
                         DATE_FORMAT(e.exam_date, '%Y-%m-%d') AS exam_date_raw,
@@ -5288,7 +5140,7 @@ if ($action) {
                 $stmt = $pdo->query("
                     SELECT 
                         e.id,
-                        e.title AS exam_name,
+                        e.title AS title,
                         COALESCE(e.subject, 'N/A') AS subject,
                         e.exam_date,
                         COALESCE(e.status, 'Pending') AS status,
@@ -5734,7 +5586,6 @@ if ($action) {
                         
                         <!-- Available Exams for Teachers (Conditional) -->
                         <?php 
-                        $currentUserRole = normalize_role($_SESSION['role'] ?? '');
                         if (in_array($currentUserRole, ['faculty', 'teacher', 'hod'])): 
                         ?>
                         <a href="#" class="sidebar-link flex items-center justify-between px-4 py-3 text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 rounded-xl text-sm font-medium transition" data-module="available_exams">
@@ -5791,12 +5642,12 @@ if ($action) {
                 $canCreateExams = in_array($currentUserRole, ['admin', 'principal', 'vice-principal', 'hod']);
                 if ($canCreateExams): 
                 ?>
-                <button id="quickAddExam" class="w-full flex items-center justify-center px-4 py-2.5 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl hover:shadow-lg transition font-medium text-sm">
+                <a href="#" class="nav-link" data-module="exammanagement">
                     <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
                     </svg>
                     Add Exam
-                </button>
+                </a>
                 <?php endif; ?>
                 <button id="exportReports" class="w-full flex items-center justify-center px-4 py-2.5 border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition font-medium text-sm">
                     <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -5809,17 +5660,24 @@ if ($action) {
     </aside>
 
     <!-- Main Content Area -->
-    <main class="flex-1 overflow-y-auto bg-gray-50" style="height: 100%;">
-        <div id="mainContent" class="p-6 md:p-8">
-            <!-- Loading State -->
-            <div class="flex items-center justify-center py-20">
-                <div class="text-center">
-                    <div class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-purple-200 border-t-purple-600 mb-4"></div>
-                    <p class="text-gray-500 font-medium">Loading dashboard...</p>
+
+        <main class="flex-1 overflow-y-auto bg-gray-50" style="height: 100%;">
+                <div id="mainContent" class="p-6 md:p-8">
+                    <?php
+                    $module = $_GET['module'] ?? 'overview';
+                    echo '<div style="background:#ffeeba;padding:10px;border-radius:6px;margin-bottom:16px;"><strong>DEBUG:</strong> Current module = <code>' . htmlspecialchars($module) . '</code></div>';
+
+                    switch ($module) {
+                        
+                    
+                        case 'overview':
+                        default:
+                            include __DIR__ . '/modules/dashboard_overview.php';
+                            break;
+                    }
+                    ?>
                 </div>
-            </div>
-        </div>
-    </main>
+        </main>
 </div>
 
 <!-- Permission modal -->
@@ -5922,29 +5780,18 @@ $(function(){
     setInterval(updatePendingExamsBadge, 120000);
 
     // Sidebar nav clicks
-    $('#sidebarNav a').on('click', function(e){
+    $(document).on("click", ".sidebar-link", function (e) {
         e.preventDefault();
-        $('#sidebarNav a').removeClass('active text-white').addClass('text-gray-600 hover:bg-purple-50');
-        $(this).removeClass('text-gray-600 hover:bg-purple-50').addClass('active text-white');
-        const module = $(this).data('module');
+        const module = $(this).data("module");
         loadModule(module);
-        
-        // Close mobile sidebar after selection
-        if (window.innerWidth < 768) {
-            $('#sidebar').removeClass('open');
-        }
     });
 
     // Quick actions
-    $('#quickAddExam').on('click', function(){
-        // Load exam management module and trigger add exam modal
-        loadModule('exam_management');
-        setTimeout(function() {
-            if (typeof showAddExamModal === 'function') {
-                showAddExamModal();
-            }
-        }, 500);
-    });
+        // Quick actions - Add Exam should link to ?page=exam_add
+        $('#quickAddExam').on('click', function(e){
+            e.preventDefault();
+            window.location.href = '?page=exam_add';
+        });
     $('#exportReports').on('click', function(){
         // Show export options modal
         const exportModal = `
@@ -6002,29 +5849,12 @@ $(function(){
 });
 
 function loadModule(module) {
-    console.log('Loading module:', module);
-    $('#mainContent').html('<div class="d-flex justify-content-center p-5 text-muted">Loading...</div>');
-    
-    // Update active state in sidebar
-    $('#sidebarNav a').removeClass('active text-white').addClass('text-gray-600 hover:bg-purple-50');
-    $('#sidebarNav a[data-module="' + module + '"]').removeClass('text-gray-600 hover:bg-purple-50').addClass('active text-white');
-    
-    $.get('?action=load_module&module=' + encodeURIComponent(module), function(resp){
-        console.log('Module loaded successfully:', module);
-        $('#mainContent').html(resp);
-        // Wire up approve/reject buttons for approvals
-        $('.approve-btn').on('click', function(){ handleApproval($(this).data('id'), 'approve'); });
-        $('.reject-btn').on('click', function(){ handleApproval($(this).data('id'), 'reject'); });
-        // Wire up user management buttons
-        $('.user-action-btn').on('click', function(){ 
-            const action = $(this).data('action');
-            const userId = $(this).data('id');
-            const status = action === 'verify' ? 'verified' : 'rejected';
-            handleUserStatusUpdate(userId, status);
-        });
-    }).fail(function(xhr){
-        console.error('Failed to load module:', module, xhr);
-        $('#mainContent').html('<div class="alert alert-danger">Failed to load module. Error: ' + xhr.status + ' ' + xhr.statusText + '</div>');
+    $("#mainContent").html("<div class='p-6'>Loading...</div>");
+    $.get("admin_dashboard.php", {
+        action: "load_module",
+        module: module
+    }, function (response) {
+        $("#mainContent").html(response);
     });
 }
 

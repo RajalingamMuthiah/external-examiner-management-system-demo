@@ -48,10 +48,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // --- Database Insertion ---
         $sql = "INSERT INTO exam_schedule (exam_name, exam_date, start_time, end_time, exam_type, department, semester, batch, college_name, venue, coordinator, examiners_needed, details, created_by_id) 
-                VALUES (:exam_name, :exam_date, :start_time, :end_time, :exam_type, :department, :semester, :batch, :college_name, :venue, :coordinator, :examiners_needed, :details, :created_by_id)";
-        
+            VALUES (:exam_name, :exam_date, :start_time, :end_time, :exam_type, :department, :semester, :batch, :college_name, :venue, :coordinator, :examiners_needed, :details, :created_by_id)";
         $stmt = $pdo->prepare($sql);
-        
         $stmt->bindParam(':exam_name', $exam_name);
         $stmt->bindParam(':exam_date', $exam_date);
         $stmt->bindParam(':start_time', $start_time);
@@ -66,15 +64,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->bindParam(':examiners_needed', $examiners_needed, PDO::PARAM_INT);
         $stmt->bindParam(':details', $details);
         $stmt->bindParam(':created_by_id', $created_by_id, PDO::PARAM_INT);
-
         $stmt->execute();
-        
+
+        // --- ALSO insert into exams table so admin can approve this exam ---
+        try {
+            // Map principal form fields to exams columns
+            $exTitle      = $exam_name;      // main exam name from form
+            $exExamDate   = $exam_date;      // 'Y-m-d'
+            $exDepartment = $department;     // or $college_name
+            $exDesc       = $details;        // long text
+            $exSubject    = $exam_type;      // use your exam_type as subject
+            $exCollegeId  = null;            // or a real college id if you have one
+            $createdBy    = $created_by_id;  // principal's user id from session
+
+            $sql2 = "INSERT INTO exams
+                        (title, exam_date, department, status,
+                         description, subject, college_id, created_by)
+                     VALUES
+                        (:title, :exam_date, :department, 'Pending',
+                         :description, :subject, :college_id, :created_by)";
+
+            $stmt2 = $pdo->prepare($sql2);
+            $stmt2->execute([
+                ':title'       => $exTitle,
+                ':exam_date'   => $exExamDate,
+                ':department'  => $exDepartment,
+                ':description' => $exDesc,
+                ':subject'     => $exSubject,
+                ':college_id'  => $exCollegeId,
+                ':created_by'  => $createdBy,
+            ]);
+        } catch (Throwable $e) {
+            // Optional: log, but do not block scheduling in principal dashboard
+            // error_log('Error inserting into exams: ' . $e->getMessage());
+        }
+
         $_SESSION['success_message'] = "Exam scheduled successfully!";
         header('Location: dashboard.php');
         exit;
 
     } catch (Exception $e) {
         $error_message = "Error: " . $e->getMessage();
+        error_log('CREATE_EXAM_ERROR: ' . $e->getMessage());
     }
 }
 ?>

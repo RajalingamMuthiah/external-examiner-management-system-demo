@@ -61,8 +61,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ':status' => 'pending',
           ]);
         }
-                // After successful registration redirect to login with a message
-                header('Location: login.php?registered=1');
+                // After successful registration, auto-login and redirect to profile page
+                session_start();
+                $userId = $pdo->lastInsertId();
+                $_SESSION['user_id'] = $userId;
+                $_SESSION['role'] = $post;
+                $_SESSION['college_id'] = null; // Will be set in profile page
+                $_SESSION['department_id'] = null; // Will be set in profile page
+                
+                header('Location: user_profile.php?new_user=1');
                 exit;
             }
         } catch (PDOException $e) {

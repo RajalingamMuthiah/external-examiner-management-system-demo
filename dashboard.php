@@ -21,6 +21,15 @@ require_once __DIR__ . '/includes/security.php';
 require_once __DIR__ . '/includes/functions.php';
 require_once __DIR__ . '/config/db.php';
 
+// Check profile completion - redirect if college/department not set
+require_once __DIR__ . '/includes/profile_check.php';
+
+// Privacy context for all principal dashboard logic
+$currentUserId = $_SESSION['user_id'] ?? 0;
+$currentUserRole = normalize_role($_SESSION['role'] ?? 'principal');
+$currentUserCollege = $_SESSION['college_id'] ?? null;
+$currentUserDept = $_SESSION['department_id'] ?? null;
+
 // SECURITY: Enforce authentication and role-based access
 require_auth();
 require_role(['principal', 'admin'], true);
@@ -102,7 +111,7 @@ try {
   $upcomingExams = [];
   try {
     $examSql = "
-      SELECT es.exam_name, es.exam_date, u.name as faculty_name
+      SELECT es.title, es.exam_date, u.name as faculty_name
       FROM exam_schedule es
       LEFT JOIN users u ON es.faculty_id = u.id
       WHERE es.exam_date >= CURDATE() AND es.exam_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)
@@ -114,8 +123,8 @@ try {
   }
   if (empty($upcomingExams)) {
     $upcomingExams = [
-      ['exam_name' => 'Mock Exam 1', 'exam_date' => date('Y-m-d', strtotime('+2 days')), 'faculty_name' => 'Mock Faculty 1'],
-      ['exam_name' => 'Mock Exam 2', 'exam_date' => date('Y-m-d', strtotime('+4 days')), 'faculty_name' => 'Mock Faculty 2']
+      ['title' => 'Mock Exam 1', 'exam_date' => date('Y-m-d', strtotime('+2 days')), 'faculty_name' => 'Mock Faculty 1'],
+      ['title' => 'Mock Exam 2', 'exam_date' => date('Y-m-d', strtotime('+4 days')), 'faculty_name' => 'Mock Faculty 2']
     ];
   }
 
@@ -223,6 +232,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_unavailable'])) 
         $_SESSION['error_message'] = "Please select at least one date.";
     }
     header('Location: dashboard.php#availability-marker');
+    exit;
+}
+
+// Ensure $current_role is always set and normalized
+if (!isset($current_role) || empty($current_role)) {
+    $current_role = $_SESSION['role'] ?? $_SESSION['user_role'] ?? $_SESSION['post'] ?? 'principal';
+    $current_role = normalize_role($current_role);
+}
+// Ensure $pending_verification_count is always set
+if (!isset($pending_verification_count) || !is_numeric($pending_verification_count)) {
+    $pending_verification_count = 0;
+}
+
+// AJAX module handler
+if (isset($_GET['ajax']) && $_GET['ajax'] == '1' && isset($_GET['module'])) {
+    $module = $_GET['module'];
+    ob_start();
+    switch ($module) {
+        case 'overview':
+            // Use assignment_widget.php and summary widgets for overview
+            include __DIR__ . '/includes/assignment_widget.php';
+            break;
+        case 'verify_faculty':
+            // Use main dashboard logic or a relevant PHP include for faculty verification
+            // Example: include __DIR__ . '/verify_users.php';
+            echo '<div class="dashboard-card"><h2>Verify Faculty</h2><p>Faculty verification logic goes here.</p></div>';
+            break;
+        case 'manage_faculty':
+            // Use manage_faculty.php or similar
+            echo '<div class="dashboard-card"><h2>Faculty Management</h2><p>Faculty management logic goes here.</p></div>';
+            break;
+        case 'create_exam':
+            // Use create_exam.php or similar
+            echo '<div class="dashboard-card"><h2>Schedule Exam</h2><p>Exam scheduling logic goes here.</p></div>';
+            break;
+        case 'other_colleges':
+            // Use view_other_college_exams.php or similar
+            echo '<div class="dashboard-card"><h2>Other Colleges</h2><p>External exams and collaboration logic goes here.</p></div>';
+            break;
+        default:
+            echo '<div class="alert alert-danger">Module not found.</div>';
+            break;
+    }
+    echo ob_get_clean();
     exit;
 }
 ?>
@@ -358,19 +411,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_unavailable'])) 
     <div class="p-4">
       <h6 class="text-uppercase small mb-4" style="color: #6b7280; font-weight: 600; letter-spacing: 0.5px;">Quick Access</h6>
       <nav class="nav flex-column gap-2">
-        <a href="dashboard.php" class="nav-link active rounded-3">
+        <a href="#" class="nav-link active rounded-3" data-module="overview">
           <i class="bi bi-house-door me-2"></i>Overview
         </a>
-        <a href="verify_users.php" class="nav-link rounded-3">
+        <a href="#" class="nav-link rounded-3" data-module="verify_faculty">
           <i class="bi bi-person-check me-2"></i>Verify Faculty
         </a>
-        <a href="manage_faculty.php" class="nav-link rounded-3">
+        <a href="#" class="nav-link rounded-3" data-module="manage_faculty">
           <i class="bi bi-people me-2"></i>Faculty Management
         </a>
-        <a href="create_exam.php" class="nav-link rounded-3">
+        <a href="#" class="nav-link rounded-3" data-module="create_exam">
           <i class="bi bi-calendar-plus me-2"></i>Schedule Exam
         </a>
-        <a href="view_other_college_exams.php" class="nav-link rounded-3">
+        <a href="#" class="nav-link rounded-3" data-module="other_colleges">
           <i class="bi bi-building me-2"></i>Other Colleges
         </a>
       </nav>
@@ -400,11 +453,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_unavailable'])) 
 
   <!-- Session Message Display -->
   <?php if (session_status() === PHP_SESSION_ACTIVE && isset($_SESSION['error_message'])): ?>
-  <div class="alert-card alert-error">
-    <strong><i class="bi bi-exclamation-circle me-2"></i>Error</strong>
-    <p class="mb-0 mt-1"><?= htmlspecialchars($_SESSION['error_message']) ?></p>
-  </div>
-  <?php unset($_SESSION['error_message']); ?>
+    <?php error_log('DASHBOARD_ERROR: ' . $_SESSION['error_message']); ?>
+    <div class="alert-card alert-error">
+      <strong><i class="bi bi-exclamation-circle me-2"></i>Error</strong>
+      <p class="mb-0 mt-1"><?= htmlspecialchars($_SESSION['error_message']) ?></p>
+    </div>
+    <?php unset($_SESSION['error_message']); ?>
   <?php endif; ?>
   
   <?php if (isset($_SESSION['success_message'])): ?>
@@ -490,25 +544,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_unavailable'])) 
       $pendingExams = [];
       if (in_array($current_role, ['principal', 'admin'])):
         try {
-          $examStmt = $pdo->prepare("
-            SELECT 
-              e.id AS exam_id,
-              e.title AS exam_name,
-              e.subject,
-              e.exam_date,
-              e.description,
-              e.department AS college_name,
-              e.created_at,
-              u.name AS created_by_name,
-              u.post AS creator_role
-            FROM exams e
-            LEFT JOIN users u ON e.created_by = u.id
-            WHERE e.status = 'Pending'
-            AND e.department = ?
-            ORDER BY e.created_at DESC
-          ");
-          $examStmt->execute([$currentUserCollege]);
-          $pendingExams = $examStmt->fetchAll(PDO::FETCH_ASSOC);
+          // Use getVisibleExamsForUser() for role-based exam visibility
+          $allExams = getVisibleExamsForUser($pdo, $currentUserId, $current_role, $currentUserCollege, $currentUserDept);
+          
+          // Filter for pending exams only
+          $pendingExams = array_filter($allExams, function($exam) {
+              return ($exam['status'] ?? '') === 'Pending';
+          });
+          
+          // Normalize structure for display
+          $pendingExams = array_map(function($exam) {
+              return [
+                  'exam_id' => $exam['id'] ?? $exam['exam_id'] ?? 0,
+                  'title' => $exam['title'] ?? '',
+                  'subject' => $exam['subject'] ?? '',
+                  'exam_date' => $exam['exam_date'] ?? '',
+                  'description' => $exam['description'] ?? '',
+                  'college_name' => $exam['department'] ?? $exam['creator_college'] ?? '',
+                  'created_at' => $exam['created_at'] ?? '',
+                  'created_by_name' => $exam['created_by_name'] ?? 'Unknown',
+                  'creator_role' => $exam['creator_role'] ?? ''
+              ];
+          }, $pendingExams);
         } catch (Exception $e) {
           $pendingExams = [];
         }
@@ -540,7 +597,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_unavailable'])) 
               <div class="bg-white rounded-lg p-4 border border-amber-100 shadow-sm">
                 <div class="flex items-start justify-between">
                   <div class="flex-1">
-                    <h4 class="font-semibold text-gray-800 text-base"><?= htmlspecialchars($exam['exam_name']) ?></h4>
+                    <h4 class="font-semibold text-gray-800 text-base"><?= htmlspecialchars($exam['title']) ?></h4>
                     <div class="mt-1 space-y-1">
                       <p class="text-sm text-gray-600">
                         <span class="font-medium">Subject:</span> <?= htmlspecialchars($exam['subject']) ?> | 
@@ -617,7 +674,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_unavailable'])) 
           body: `action=update_exam_status&exam_id=${examId}&status=Cancelled&csrf_token=<?= $_SESSION['csrf_token'] ?? '' ?>`
         })
         .then(res => res.json())
-        .then(data => {
+        .then data => {
           if (data.success) {
             alert('Exam rejected.');
             location.reload();
@@ -688,7 +745,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_unavailable'])) 
             <?php foreach ($upcomingExams as $exam): ?>
               <div class="list-group-item d-flex justify-content-between align-items-center">
                 <div>
-                  <div class="fw-semibold"><?= htmlspecialchars($exam['exam_name']) ?></div>
+                  <div class="fw-semibold"><?= htmlspecialchars($exam['title']) ?></div>
                   <small class="text-muted">Faculty: <?= htmlspecialchars($exam['faculty_name'] ?? 'N/A') ?></small>
                 </div>
                 <div class="text-end">
@@ -771,26 +828,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_unavailable'])) 
   </div>
 
   <!-- Quick Actions -->
-  <div class="dashboard-card mt-4">
-    <h5 class="fw-bold mb-3">Quick Actions</h5>
-    <div class="row g-3">
-      <div class="col-md-4">
-        <a href="verify_users.php" class="btn btn-success w-100 py-3">
-          <i class="bi bi-person-check me-2"></i>Verify Faculty
-        </a>
-      </div>
-      <div class="col-md-4">
-        <a href="manage_faculty.php" class="btn btn-primary w-100 py-3">
-          <i class="bi bi-people me-2"></i>Manage Faculty
-        </a>
-      </div>
-      <div class="col-md-4">
-        <a href="reports.php" class="btn btn-secondary w-100 py-3">
-          <i class="bi bi-file-bar-graph me-2"></i>View Reports
-        </a>
-      </div>
-    </div>
-  </div>
+
 
 </div>
 
@@ -804,7 +842,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_unavailable'])) 
   })();
 </script><!-- Bootstrap 5 JS Bundle -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-
+<script>
+// AJAX module loader for dashboard tabs
+function loadDashboardModule(module) {
+  const mainContainer = document.querySelector('.main-container');
+  if (!mainContainer) return;
+  mainContainer.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div><p class="mt-3">Loading...</p></div>';
+  fetch(`dashboard.php?ajax=1&module=${encodeURIComponent(module)}`)
+    .then(res => res.text())
+    .then(html => {
+      mainContainer.innerHTML = html;
+    })
+    .catch(() => {
+      mainContainer.innerHTML = '<div class="alert alert-danger">Failed to load module.</div>';
+    });
+}
+// Attach loader to sidebar links
+window.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('.nav-link[data-module]').forEach(function(link) {
+    link.addEventListener('click', function(e) {
+      e.preventDefault();
+      loadDashboardModule(link.getAttribute('data-module'));
+      document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+      link.classList.add('active');
+    });
+  });
+});
+</script>
 </div>
 </body>
 </html>

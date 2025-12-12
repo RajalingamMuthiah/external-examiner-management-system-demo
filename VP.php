@@ -21,6 +21,15 @@ require_once __DIR__ . '/includes/security.php';
 require_once __DIR__ . '/includes/functions.php';
 require_once __DIR__ . '/config/db.php';
 
+// Check profile completion - redirect if college/department not set
+require_once __DIR__ . '/includes/profile_check.php';
+
+// Privacy context for all vice principal dashboard logic
+$currentUserId = $_SESSION['user_id'] ?? get_current_user_id();
+$currentUserRole = normalize_role($_SESSION['role'] ?? 'vice-principal');
+$currentUserCollege = $_SESSION['college_id'] ?? null;
+$currentUserDept = $_SESSION['department_id'] ?? null;
+
 // SECURITY: Enforce authentication and role-based access
 require_auth();
 require_role(['vice-principal', 'admin'], true);
@@ -45,49 +54,22 @@ if (!$userInfo) {
 $currentUserName = $userInfo['name'] ?? 'Vice Principal';
 $currentUserCollege = $userInfo['college_name'] ?? '';
 
-// Fetch approved exams from OTHER colleges
-$examsStmt = $pdo->prepare("
-    SELECT 
-        e.id AS exam_id,
-        e.title AS exam_name,
-        e.subject,
-        e.exam_date,
-        e.status,
-        e.description,
-        e.department AS college_name,
-        u.name AS created_by_name,
-        e.created_at,
-        (SELECT COUNT(*) FROM assignments WHERE exam_id = e.id) AS total_assigned
-    FROM exams e
-    LEFT JOIN users u ON e.created_by = u.id
-    WHERE e.status = 'Approved'
-    AND e.department != ?
-    AND e.exam_date >= CURDATE()
-    ORDER BY e.exam_date ASC
-");
-$examsStmt->execute([$currentUserCollege]);
-$approvedExams = $examsStmt->fetchAll(PDO::FETCH_ASSOC);
+// Use getVisibleExamsForUser() function for proper role-based filtering
+$allExams = getVisibleExamsForUser($pdo, $currentUserId, $currentUserRole, $currentUserCollege, $currentUserDept);
 
-// Fetch exams from own college
-$ownExamsStmt = $pdo->prepare("
-    SELECT 
-        e.id AS exam_id,
-        e.title AS exam_name,
-        e.subject,
-        e.exam_date,
-        e.status,
-        e.description,
-        e.department AS college_name,
-        u.name AS created_by_name,
-        e.created_at
-    FROM exams e
-    LEFT JOIN users u ON e.created_by = u.id
-    WHERE e.department = ?
-    ORDER BY e.created_at DESC
-    LIMIT 10
-");
-$ownExamsStmt->execute([$currentUserCollege]);
-$ownExams = $ownExamsStmt->fetchAll(PDO::FETCH_ASSOC);
+// Split into own exams and approved exams from other colleges
+$ownExams = [];
+$approvedExams = [];
+
+foreach ($allExams as $exam) {
+    // Check if exam is from VP's own college
+    if ($exam['department'] === $currentUserCollege || $exam['creator_college'] === $currentUserCollege) {
+        $ownExams[] = $exam;
+    } elseif ($exam['status'] === 'approved' || $exam['status'] === 'Approved') {
+        // Approved exams from other colleges
+        $approvedExams[] = $exam;
+    }
+}
 
 // Stats
 $totalApproved = count($approvedExams);
@@ -307,7 +289,9 @@ if (empty($_SESSION['csrf_token'])) {
                                 <?php foreach ($approvedExams as $exam): ?>
                                 <tr class="exam-card">
                                     <td>
-                                        <strong><?= htmlspecialchars($exam['exam_name']) ?></strong>
+                                        <strong><?= htmlspecialchars($exam['title']) ?></strong>
+                                                <strong><?= htmlspecialchars($exam['title']) ?></strong>
+                                            <strong><?= htmlspecialchars($exam['title']) ?></strong>
                                         <?php if ($exam['description']): ?>
                                         <br><small class="text-muted"><?= htmlspecialchars(substr($exam['description'], 0, 50)) ?>...</small>
                                         <?php endif; ?>
@@ -365,7 +349,10 @@ if (empty($_SESSION['csrf_token'])) {
                             <tbody>
                                 <?php foreach ($ownExams as $exam): ?>
                                 <tr>
-                                    <td><strong><?= htmlspecialchars($exam['exam_name']) ?></strong></td>
+                                    <td><strong><?= htmlspecialchars($exam['title']) ?></strong></td>
+                                            <td><strong><?= htmlspecialchars($exam['title']) ?></strong></td>
+                                        <td><strong><?= htmlspecialchars($exam['title']) ?></strong></td>
+                                        onclick="selectExam(<?= $exam['exam_id'] ?>, '<?= esc($exam['title']) ?>')"
                                     <td><span class="badge bg-info"><?= htmlspecialchars($exam['subject']) ?></span></td>
                                     <td><?= date('M d, Y', strtotime($exam['exam_date'])) ?></td>
                                     <td>

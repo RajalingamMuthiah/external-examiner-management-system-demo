@@ -17,7 +17,7 @@ try {
 
     // --- Fetch Exams from Other Colleges ---
     // Fetches upcoming exams from all colleges except the user's own
-    $sql = "SELECT id, exam_name, exam_date, college_name, exam_type, details 
+    $sql = "SELECT id, title, exam_date, college_name, exam_type, details 
             FROM exam_schedule 
             WHERE college_name != :current_college AND exam_date >= CURDATE()
             ORDER BY exam_date ASC";
@@ -66,7 +66,7 @@ try {
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <?php foreach ($otherExams as $exam): ?>
           <div class="bg-white rounded-xl shadow p-6 flex flex-col">
-            <h3 class="text-lg font-bold text-gray-800"><?= htmlspecialchars($exam['exam_name']) ?></h3>
+            <h3 class="text-lg font-bold text-gray-800"><?= htmlspecialchars($exam['title']) ?></h3>
             <p class="text-sm font-semibold text-indigo-600 mt-1"><?= htmlspecialchars($exam['college_name']) ?></p>
             
             <div class="my-4 border-t border-gray-100"></div>

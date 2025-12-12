@@ -109,7 +109,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
       if ($authOk) {
         $role = $user['role'] ?? $user['post'] ?? '';
-        login_user($user['id'], $user['name'] ?? $user['username'] ?? $email, $role);
+        $userId = $user['id'];
+        $userName = $user['name'] ?? $user['username'] ?? $email;
+        $collegeId = $user['college_id'] ?? null;
+        $departmentId = $user['department_id'] ?? null;
+        
+        // Set session variables
+        login_user($userId, $userName, $role);
+        $_SESSION['college_id'] = $collegeId;
+        $_SESSION['department_id'] = $departmentId;
+        
         redirect_by_role($role);
       }
     } else {
@@ -375,19 +384,6 @@ $flashError = get_flash('error') ?? get_flash('info');
         </svg>
         Create New Account
       </a>
-    </div>
-
-    <!-- Admin Info Box -->
-    <div class="mt-6 p-4 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl border border-purple-100">
-      <div class="flex items-start">
-        <svg class="w-5 h-5 text-purple-600 mt-0.5 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-          <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
-        </svg>
-        <div>
-          <p class="text-xs font-semibold text-gray-700 mb-1">🔐 Admin Access</p>
-          <p class="text-xs text-gray-600">Admin can login using: <code class="bg-white px-2 py-0.5 rounded text-purple-600 font-mono">arjun@gmail.com</code></p>
-        </div>
-      </div>
     </div>
   </div>
 
