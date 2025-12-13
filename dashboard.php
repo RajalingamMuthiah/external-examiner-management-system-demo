@@ -32,7 +32,7 @@ $currentUserDept = $_SESSION['department_id'] ?? null;
 
 // SECURITY: Enforce authentication and role-based access
 require_auth();
-require_role(['principal', 'admin'], true);
+require_role(['principal', 'vice_principal', 'admin'], true);
 // Fetch total users separately to ensure it always shows
 try {
   $totalUsers = (int) $pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
@@ -412,19 +412,19 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == '1' && isset($_GET['module'])) {
     <div class="p-4">
       <h6 class="text-uppercase small mb-4" style="color: #6b7280; font-weight: 600; letter-spacing: 0.5px;">Quick Access</h6>
       <nav class="nav flex-column gap-2">
-        <a href="#" class="nav-link active rounded-3" data-module="overview">
+        <a href="dashboard.php" class="nav-link active rounded-3">
           <i class="bi bi-house-door me-2"></i>Overview
         </a>
-        <a href="#" class="nav-link rounded-3" data-module="verify_faculty">
+        <a href="verify_users.php" class="nav-link rounded-3">
           <i class="bi bi-person-check me-2"></i>Verify Faculty
         </a>
-        <a href="#" class="nav-link rounded-3" data-module="manage_faculty">
+        <a href="manage_faculty.php" class="nav-link rounded-3">
           <i class="bi bi-people me-2"></i>Faculty Management
         </a>
-        <a href="#" class="nav-link rounded-3" data-module="create_exam">
+        <a href="create_exam.php" class="nav-link rounded-3">
           <i class="bi bi-calendar-plus me-2"></i>Schedule Exam
         </a>
-        <a href="#" class="nav-link rounded-3" data-module="other_colleges">
+        <a href="view_other_college_exams.php" class="nav-link rounded-3">
           <i class="bi bi-building me-2"></i>Other Colleges
         </a>
       </nav>
@@ -436,7 +436,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == '1' && isset($_GET['module'])) {
         <a href="#analytics" class="nav-link rounded-3">
           <i class="bi bi-graph-up me-2"></i>Analytics
         </a>
-        <a href="#" class="nav-link rounded-3">
+        <a href="admin_dashboard.php?module=analytics" class="nav-link rounded-3">
           <i class="bi bi-file-earmark-text me-2"></i>Reports
         </a>
       </nav>

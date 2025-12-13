@@ -1,4 +1,10 @@
 <?php
+// REFLECTION FIX: Prevent caching and make changes reflect immediately
+ob_start();
+header('Cache-Control: no-cache, no-store, must-revalidate');
+header('Pragma: no-cache');
+header('Expires: 0');
+
 /**
  * VICE PRINCIPAL DASHBOARD - Enhanced with Security & Privacy Controls
  * ===================================================================
@@ -391,6 +397,58 @@ if (empty($_SESSION['csrf_token'])) {
 <script>
 // CSRF Token
 const csrfToken = '<?= $_SESSION['csrf_token'] ?? '' ?>';
+
+// Dashboard Switcher Function
+function switchDashboard(dashboard) {
+    const btn = event.target.closest('button');
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    
+    $.ajax({
+        url: 'switch_dashboard.php',
+        method: 'POST',
+        data: {
+            dashboard: dashboard,
+            csrf_token: csrfToken
+        },
+        dataType: 'json',
+        success: function(response) {
+            if (response.success) {
+                showToast(response.message || 'Switching dashboard...', 'success');
+                setTimeout(() => window.location.href = response.redirect, 500);
+            } else {
+                showToast(response.message || 'Failed to switch dashboard', 'danger');
+                btn.disabled = false;
+                btn.innerHTML = originalHTML;
+            }
+        },
+        error: function() {
+            showToast('An error occurred while switching dashboards', 'danger');
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    });
+}
+
+// Toast Helper
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = 'position-fixed top-0 end-0 p-3';
+    toast.style.zIndex = '9999';
+    toast.innerHTML = `
+        <div class="toast show" role="alert">
+            <div class="toast-header bg-${type} text-white">
+                <strong class="me-auto">${type === 'success' ? 'Success' : type === 'danger' ? 'Error' : 'Info'}</strong>
+                <button type="button" class="btn-close btn-close-white" onclick="this.closest('.position-fixed').remove()"></button>
+            </div>
+            <div class="toast-body">${message}</div>
+        </div>
+    `;
+    
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
 
 function showAddExamModal() {
     const userCollege = '<?= htmlspecialchars($currentUserCollege) ?>';

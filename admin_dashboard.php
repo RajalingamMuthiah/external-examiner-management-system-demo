@@ -1,4 +1,10 @@
 <?php
+// REFLECTION FIX: Prevent caching and make changes reflect immediately
+ob_start();
+header('Cache-Control: no-cache, no-store, must-revalidate');
+header('Pragma: no-cache');
+header('Expires: 0');
+
 // ...session and DB setup...
 require_once __DIR__ . '/includes/functions.php';
 // Ensure currentUserRole is always defined for permission checks
@@ -1915,7 +1921,7 @@ if ($action) {
                                 <p class="text-muted small mb-0">Manage all registered users, roles, and permissions</p>
                             </div>
                             <div class="btn-group">
-                                <button class="btn btn-success btn-sm" onclick="location.href='register.php'">
+                                <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#addUserModal">
                                     <i class="bi bi-plus-lg"></i> Add User
                                 </button>
                                 <button class="btn btn-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown">
@@ -2346,7 +2352,105 @@ if ($action) {
                             $('#mainContent').prepend(alert);
                             setTimeout(function() { $('.alert').fadeOut(); }, 3000);
                         }
+                        
+                        // Add User Modal Submit
+                        $('#addUserForm').on('submit', function(e) {
+                            e.preventDefault();
+                            const formData = $(this).serialize() + '&action=add_new_user';
+                            
+                            $.ajax({
+                                url: 'admin_dashboard.php',
+                                method: 'POST',
+                                data: formData,
+                                dataType: 'json',
+                                success: function(response) {
+                                    if (response.success) {
+                                        $('#addUserModal').modal('hide');
+                                        showAlert('success', response.message || 'User added successfully!');
+                                        $('#addUserForm')[0].reset();
+                                        loadAllUsers(); // Reload user list
+                                    } else {
+                                        showAlert('danger', response.message || 'Failed to add user');
+                                    }
+                                },
+                                error: function() {
+                                    showAlert('danger', 'Network error. Please try again.');
+                                }
+                            });
+                        });
                         </script>
+                        
+                        <!-- Add User Modal -->
+                        <div class="modal fade" id="addUserModal" tabindex="-1">
+                            <div class="modal-dialog modal-lg">
+                                <div class="modal-content">
+                                    <div class="modal-header bg-success text-white">
+                                        <h5 class="modal-title"><i class="bi bi-person-plus"></i> Add New User</h5>
+                                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        <form id="addUserForm">
+                                            <div class="row g-3">
+                                                <div class="col-md-6">
+                                                    <label class="form-label">Full Name <span class="text-danger">*</span></label>
+                                                    <input type="text" name="name" class="form-control" required>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label">Email <span class="text-danger">*</span></label>
+                                                    <input type="email" name="email" class="form-control" required>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label">Phone <span class="text-danger">*</span></label>
+                                                    <input type="tel" name="phone" class="form-control" required pattern="[0-9]{10}">
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label">Role <span class="text-danger">*</span></label>
+                                                    <select name="post" class="form-select" required>
+                                                        <option value="">Select Role</option>
+                                                        <option value="teacher">Teacher</option>
+                                                        <option value="hod">HOD</option>
+                                                        <option value="vice_principal">Vice Principal</option>
+                                                        <option value="principal">Principal</option>
+                                                        <option value="admin">Admin</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-md-12">
+                                                    <label class="form-label">College <span class="text-danger">*</span></label>
+                                                    <select name="college_id" class="form-select" required>
+                                                        <option value="">Select College</option>
+                                                        <?php foreach ($colleges as $college): ?>
+                                                            <option value="<?= (int)$college['id'] ?>"><?= esc($college['name']) ?></option>
+                                                        <?php endforeach; ?>
+                                                    </select>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label">Password <span class="text-danger">*</span></label>
+                                                    <input type="password" name="password" class="form-control" required minlength="6">
+                                                    <small class="text-muted">Minimum 6 characters</small>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label">Confirm Password <span class="text-danger">*</span></label>
+                                                    <input type="password" name="confirm_password" class="form-control" required>
+                                                </div>
+                                                <div class="col-md-12">
+                                                    <label class="form-label">Status</label>
+                                                    <select name="status" class="form-select">
+                                                        <option value="verified">Verified</option>
+                                                        <option value="pending">Pending</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                        </form>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                        <button type="submit" form="addUserForm" class="btn btn-success">
+                                            <i class="bi bi-check-lg"></i> Add User
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <?php
                     $html = ob_get_clean();
@@ -2488,14 +2592,29 @@ if ($action) {
                                         $description,
                                         $adminId,
                                     ]);
-                                    // Redirect to reload the module with full layout and avoid partial HTML
-                                    header('Location: admin_dashboard.php');
-                                    exit;
+                                    
+                                    // Return success for AJAX
+                                    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest') {
+                                        json_response(['success' => true, 'message' => 'Exam created successfully!']);
+                                    }
+                                    
+                                    $addExamSuccess = true;
+                                    $addExamMessage = 'Exam created successfully! Reload the page to see it in the list.';
                                 } catch (Throwable $e) {
                                     $addExamMessage = 'Server error while creating exam: ' . esc($e->getMessage());
+                                    
+                                    // Return error for AJAX
+                                    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest') {
+                                        json_response(['success' => false, 'message' => $addExamMessage]);
+                                    }
                                 }
                             } else {
                                 $addExamMessage = 'Please fill all required fields.';
+                                
+                                // Return error for AJAX
+                                if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest') {
+                                    json_response(['success' => false, 'message' => $addExamMessage]);
+                                }
                             }
                         }
                     // Fetch and manage all exam requirements posted by colleges
@@ -2885,7 +3004,7 @@ if ($action) {
                     $canCreateExams = in_array($currentUserRole, ['admin', 'principal', 'vice-principal', 'hod']);
                     ?>
 
-                    <?php if ($canCreateExams): ?>
+                    <!-- <?php if ($canCreateExams): ?>
                         <div class="card shadow-sm mt-4 mb-4">
                             <div class="card-header bg-success text-white">
                                 <strong>Create New Exam</strong>
@@ -2895,8 +3014,8 @@ if ($action) {
                                     <div class="alert <?= $addExamSuccess ? 'alert-success' : 'alert-danger' ?>">
                                         <?= esc($addExamMessage) ?>
                                     </div>
-                                <?php endif; ?>
-
+                                <?php endif; ?> -->
+<!-- 
                                 <form method="post" action="admin_dashboard.php?action=load_module&module=exam_management" class="row g-3" id="inlineAddExamForm">
                                     <input type="hidden" name="form_type" value="inline_add_exam">
 
@@ -2931,7 +3050,7 @@ if ($action) {
                                             <i class="bi bi-check-circle"></i> Create Exam
                                         </button>
                                     </div>
-                                </form>
+                                </form> -->
                             </div>
                         </div>
                     <?php endif; ?>
@@ -3554,12 +3673,7 @@ if ($action) {
                                                             <label class="form-check-label small">🕐 Activity Logs</label>
                                                         </div>
                                                     </div>
-                                                    <div class="mb-2">
-                                                        <div class="form-check form-switch">
-                                                            <input class="form-check-input" type="checkbox" data-perm="module_settings" <?= !empty($user['module_settings']) ? 'checked' : '' ?>>
-                                                            <label class="form-check-label small">⚙️ System Settings</label>
-                                                        </div>
-                                                    </div>
+                                                    
                                                 </div>
 
                                                 <!-- Role Dashboards Column -->
@@ -3842,7 +3956,7 @@ if ($action) {
                                 <div class="card border-0 shadow-sm h-100" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">
                                     <div class="card-body text-white">
                                         <div class="small opacity-75">Pending Items</div>
-                                        <div class="h2 mb-0"><?= number_format($stats['pending_users'] + $stats['pending_approvals']) ?></div>
+                                        <div class="h2 mb-0"><?= number_format(($stats['pending_users'] ?? 0) + ($stats['pending_approvals'] ?? 0)) ?></div>
                                         <div class="small mt-2">Requires attention</div>
                                     </div>
                                 </div>
@@ -4031,16 +4145,21 @@ if ($action) {
                 case 'settings':
                     // SYSTEM SETTINGS: Application configuration
                     // Get current settings from database or config
-                    $settingsQuery = $pdo->query("
-                        CREATE TABLE IF NOT EXISTS system_settings (
-                            setting_key VARCHAR(100) PRIMARY KEY,
-                            setting_value TEXT,
-                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                        )
-                    ");
-                    
-                    // Fetch existing settings
-                    $settingsData = $pdo->query("SELECT * FROM system_settings")->fetchAll(PDO::FETCH_KEY_PAIR);
+                    try {
+                        $settingsQuery = $pdo->query("
+                            CREATE TABLE IF NOT EXISTS system_settings (
+                                setting_key VARCHAR(100) PRIMARY KEY,
+                                setting_value TEXT,
+                                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                            )
+                        ");
+                        
+                        // Fetch existing settings
+                        $settingsData = $pdo->query("SELECT * FROM system_settings")->fetchAll(PDO::FETCH_KEY_PAIR);
+                    } catch (Exception $e) {
+                        error_log("Settings module error: " . $e->getMessage());
+                        $settingsData = [];
+                    }
                     
                     // Default settings
                     $settings = [
@@ -4255,6 +4374,152 @@ if ($action) {
                     </script>
                     <?php
                     $html = ob_get_clean();
+                    if (empty($html)) {
+                        echo "<div class='alert alert-danger'>Error: Settings module returned empty content</div>";
+                        error_log("Settings module: ob_get_clean() returned empty");
+                    } else {
+                        echo $html;
+                    }
+                    exit;
+
+                case 'create_exam':
+                    // CREATE EXAM FORM ONLY
+                    $canCreateExams = in_array($currentUserRole, ['admin', 'principal', 'vice-principal', 'hod']);
+                    
+                    if (!$canCreateExams) {
+                        echo '<div class="alert alert-danger">You do not have permission to create exams.</div>';
+                        exit;
+                    }
+                    
+                    ob_start();
+                    ?>
+                    <div class="p-4">
+                        <div class="card shadow-sm">
+                            <div class="card-header bg-success text-white">
+                                <h4 class="mb-0"><i class="bi bi-plus-circle"></i> Create New Exam</h4>
+                            </div>
+                            <div class="card-body">
+                                <div id="createExamAlert"></div>
+                                
+                                <form id="createExamForm" class="row g-3">
+                                    <input type="hidden" name="form_type" value="inline_add_exam">
+                                    <input type="hidden" name="csrf_token" value="<?= esc($_SESSION['csrf_token']) ?>">
+
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold">Exam Name <span class="text-danger">*</span></label>
+                                        <input type="text" name="exam_name" class="form-control" required 
+                                               placeholder="e.g., Final Semester Mathematics" autofocus>
+                                    </div>
+
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold">Subject <span class="text-danger">*</span></label>
+                                        <input type="text" name="subject" class="form-control" required 
+                                               placeholder="e.g., Advanced Mathematics">
+                                    </div>
+
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold">College / Department <span class="text-danger">*</span></label>
+                                        <input type="text" name="college" class="form-control" required 
+                                               value="<?= esc($currentUserCollege) ?>" 
+                                               placeholder="College or Department Name">
+                                    </div>
+
+                                    <div class="col-md-6">
+                                        <label class="form-label fw-semibold">Exam Date <span class="text-danger">*</span></label>
+                                        <input type="date" name="exam_date" class="form-control" required 
+                                               min="<?= date('Y-m-d') ?>">
+                                    </div>
+
+                                    <div class="col-12">
+                                        <label class="form-label fw-semibold">Description (Optional)</label>
+                                        <textarea name="description" rows="3" class="form-control"
+                                                  placeholder="Exam details, requirements, special instructions..."></textarea>
+                                    </div>
+
+                                    <div class="col-12">
+                                        <hr>
+                                        <div class="d-flex justify-content-between">
+                                            <button type="button" class="btn btn-secondary" onclick="loadModule('exam_management')">
+                                                <i class="bi bi-arrow-left"></i> Back to Exam List
+                                            </button>
+                                            <button type="submit" class="btn btn-success btn-lg">
+                                                <i class="bi bi-check-circle"></i> Create Exam
+                                            </button>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <script>
+                    $(document).ready(function() {
+                        $('#createExamForm').on('submit', function(e) {
+                            e.preventDefault();
+                            
+                            const submitBtn = $(this).find('button[type="submit"]');
+                            const originalText = submitBtn.html();
+                            submitBtn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Creating...');
+                            
+                            $.ajax({
+                                url: 'admin_dashboard.php?action=load_module&module=exam_management',
+                                method: 'POST',
+                                data: $(this).serialize(),
+                                dataType: 'json',
+                                success: function(response) {
+                                    if (response.success) {
+                                        $('#createExamAlert').html('<div class="alert alert-success alert-dismissible fade show"><i class="bi bi-check-circle"></i> ' + response.message + '</div>');
+                                        $('#createExamForm')[0].reset();
+                                        
+                                        // Redirect to exam management after 2 seconds
+                                        setTimeout(function() {
+                                            loadModule('exam_management');
+                                        }, 2000);
+                                    } else {
+                                        $('#createExamAlert').html('<div class="alert alert-danger alert-dismissible fade show"><i class="bi bi-exclamation-triangle"></i> ' + response.message + '</div>');
+                                        submitBtn.prop('disabled', false).html(originalText);
+                                    }
+                                },
+                                error: function() {
+                                    $('#createExamAlert').html('<div class="alert alert-danger alert-dismissible fade show"><i class="bi bi-exclamation-triangle"></i> An error occurred while creating the exam.</div>');
+                                    submitBtn.prop('disabled', false).html(originalText);
+                                }
+                            });
+                        });
+                    });
+                    </script>
+                    <?php
+                    $html = ob_get_clean();
+                    echo $html;
+                    exit;
+
+                case 'question_papers':
+                    // QUESTION PAPERS MODULE - Load the question papers management interface
+                    ob_start();
+                    ?>
+                    <div class="p-4">
+                        <div class="card shadow-sm">
+                            <div class="card-header bg-primary text-white">
+                                <h4 class="mb-0"><i class="bi bi-file-earmark-text"></i> Question Papers Management</h4>
+                            </div>
+                            <div class="card-body">
+                                <div class="alert alert-info">
+                                    <i class="bi bi-info-circle"></i> Loading question papers module...
+                                </div>
+                                <?php
+                                // Include the question papers module
+                                if (file_exists(__DIR__ . '/question_papers.php')) {
+                                    // Load the content without the full page structure
+                                    include __DIR__ . '/question_papers.php';
+                                } else {
+                                    echo '<div class="alert alert-warning">Question papers module not found.</div>';
+                                }
+                                ?>
+                            </div>
+                        </div>
+                    </div>
+                    <?php
+                    $html = ob_get_clean();
                     echo $html;
                     exit;
 
@@ -4265,6 +4530,51 @@ if ($action) {
             }
         }
 
+        if ($action === 'add_new_user') {
+            if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_response(['success' => false, 'message' => 'Invalid method']);
+            
+            $name = trim($_POST['name'] ?? '');
+            $email = trim($_POST['email'] ?? '');
+            $phone = trim($_POST['phone'] ?? '');
+            $post = trim($_POST['post'] ?? '');
+            $college_id = (int)($_POST['college_id'] ?? 0);
+            $password = $_POST['password'] ?? '';
+            $confirm_password = $_POST['confirm_password'] ?? '';
+            $status = $_POST['status'] ?? 'verified';
+            
+            // Validation
+            if (empty($name) || empty($email) || empty($phone) || empty($post) || $college_id <= 0 || empty($password)) {
+                json_response(['success' => false, 'message' => 'All fields are required']);
+            }
+            
+            if ($password !== $confirm_password) {
+                json_response(['success' => false, 'message' => 'Passwords do not match']);
+            }
+            
+            if (strlen($password) < 6) {
+                json_response(['success' => false, 'message' => 'Password must be at least 6 characters']);
+            }
+            
+            // Check if email already exists
+            $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ?");
+            $stmt->execute([$email]);
+            if ($stmt->fetch()) {
+                json_response(['success' => false, 'message' => 'Email already exists']);
+            }
+            
+            // Hash password
+            $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
+            
+            // Insert user
+            try {
+                $stmt = $pdo->prepare("INSERT INTO users (name, email, phone, post, college_id, password, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())");
+                $stmt->execute([$name, $email, $phone, $post, $college_id, $hashedPassword, $status]);
+                json_response(['success' => true, 'message' => 'User added successfully!']);
+            } catch (Exception $e) {
+                json_response(['success' => false, 'message' => 'Failed to add user: ' . $e->getMessage()]);
+            }
+        }
+        
         if ($action === 'update_user_status') {
              if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_response(['success' => false, 'message' => 'Invalid method']);
              $csrf = $_POST['csrf_token'] ?? '';
@@ -5434,6 +5744,13 @@ if ($action) {
 
             <!-- Right Side: Notifications & User Menu -->
             <div class="flex items-center space-x-3">
+                <!-- Session Refresh Button -->
+                <button onclick="window.location.reload(true)" class="relative p-2 rounded-lg bg-red-50 hover:bg-red-100 transition group" title="Force Refresh (Clear Cache)">
+                    <svg class="w-6 h-6 text-red-600 group-hover:text-red-700 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                </button>
+                
                 <!-- Notifications -->
                 <button id="notifBtn" class="relative p-2 rounded-lg hover:bg-purple-50 transition group">
                     <svg class="w-6 h-6 text-gray-600 group-hover:text-purple-600 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -5463,55 +5780,35 @@ if ($action) {
                             <p class="text-sm font-semibold text-gray-800"><?= esc($_SESSION['name'] ?? 'Admin') ?></p>
                             <p class="text-xs text-gray-500"><?= esc($_SESSION['user_id'] ?? 'ID: N/A') ?></p>
                         </div>
-                        <div class="py-2">
-                            <a href="#" id="managePermissions" class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-purple-50 transition">
-                                <svg class="w-4 h-4 mr-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>
-                                </svg>
-                                Manage Permissions
-                            </a>
-                            <a href="dashboard.php" class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-purple-50 transition">
-                                <svg class="w-4 h-4 mr-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
-                                </svg>
-                                User Dashboard
-                            </a>
-                        </div>
                         
-                        <!-- Other Role Dashboards -->
+                        <!-- Switch Dashboard Dropdown -->
                         <div class="border-t border-gray-100">
                             <div class="px-4 py-2 bg-gray-50">
-                                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">View Other Dashboards</p>
+                                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Switch Dashboard</p>
                             </div>
-                            <a href="#" onclick="loadModule('principal'); return false;" class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-indigo-50 transition">
+                            <a href="dashboard.php" class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-indigo-50 transition">
                                 <svg class="w-4 h-4 mr-3 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
                                 </svg>
                                 Principal Dashboard
                             </a>
-                            <a href="#" onclick="loadModule('vice'); return false;" class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-purple-50 transition">
-                                <svg class="w-4 h-4 mr-3 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
-                                </svg>
-                                Vice Principal Dashboard
-                            </a>
-                            <a href="#" onclick="loadModule('hod'); return false;" class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 transition">
+                            <a href="hod_dashboard.php" class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 transition">
                                 <svg class="w-4 h-4 mr-3 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
                                 </svg>
                                 HOD Dashboard
                             </a>
-                            <a href="#" onclick="loadModule('teacher'); return false;" class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-green-50 transition">
+                            <a href="teacher_dashboard.php" class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-green-50 transition">
                                 <svg class="w-4 h-4 mr-3 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
                                 </svg>
                                 Teacher Dashboard
                             </a>
-                            <a href="#" onclick="loadModule('n8n'); return false;" class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-yellow-50 transition">
-                                <svg class="w-4 h-4 mr-3 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                            <a href="VP.php" class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-purple-50 transition">
+                                <svg class="w-4 h-4 mr-3 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
                                 </svg>
-                                Automation Dashboard
+                                Vice Principal Dashboard
                             </a>
                         </div>
                         <div class="border-t border-gray-100">
@@ -5554,6 +5851,43 @@ if ($action) {
                             Dashboard Overview
                         </a>
                         
+                        <!-- Exam Management with Submenu -->
+                        <div class="mb-2">
+                            <a href="#" class="sidebar-link flex items-center justify-between px-4 py-3 text-gray-700 hover:bg-purple-50 hover:text-purple-700 rounded-xl text-sm font-medium transition" onclick="toggleExamSubmenu(event)">
+                                <div class="flex items-center">
+                                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+                                    </svg>
+                                    Exam Management
+                                </div>
+                                <svg id="examSubmenuIcon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </a>
+                            <!-- Exam Submenu -->
+                            <div id="examSubmenu" class="hidden ml-8 mt-1 space-y-1">
+                                <a href="#" onclick="loadModule('create_exam'); return false;" class="flex items-center px-4 py-2 text-sm text-gray-600 hover:bg-purple-50 hover:text-purple-700 rounded-lg transition">
+                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                                    </svg>
+                                    Create Exam
+                                </a>
+                                <a href="#" onclick="loadModule('exam_management'); return false;" class="flex items-center px-4 py-2 text-sm text-gray-600 hover:bg-purple-50 hover:text-purple-700 rounded-lg transition">
+                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                    </svg>
+                                    View All Exams
+                                </a>
+                                <a href="#" onclick="loadModule('question_papers'); return false;" class="flex items-center px-4 py-2 text-sm text-gray-600 hover:bg-purple-50 hover:text-purple-700 rounded-lg transition">
+                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                                    </svg>
+                                    Question Papers
+                                </a>
+                            </div>
+                        </div>
+                        
                         <!-- User Management -->
                         <a href="#" class="sidebar-link flex items-center px-4 py-3 text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 rounded-xl text-sm font-medium transition" data-module="user_management">
                             <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -5571,17 +5905,6 @@ if ($action) {
                             <?php if ($PENDING_TOTAL > 0): ?>
                             <span class="ml-auto inline-flex items-center justify-center w-6 h-6 text-xs font-bold rounded-full bg-red-500 text-white animate-pulse"><?= (int)$PENDING_TOTAL ?></span>
                             <?php endif; ?>
-                        </a>
-                        
-                        <!-- Exam Management -->
-                        <a href="#" class="sidebar-link flex items-center justify-between px-4 py-3 text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 rounded-xl text-sm font-medium transition" data-module="exam_management">
-                            <div class="flex items-center">
-                                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
-                                </svg>
-                                Exam Management
-                            </div>
-                            <span id="pendingExamsBadge" class="hidden badge bg-warning text-dark px-2 py-1 rounded-full text-xs font-bold"></span>
                         </a>
                         
                         <!-- Available Exams for Teachers (Conditional) -->
@@ -5637,18 +5960,6 @@ if ($action) {
 
             <!-- Quick Actions -->
             <div class="border-t border-gray-200 pt-4 mt-auto space-y-2">
-                <?php 
-                // Show Add Exam button for roles that can create exams
-                $canCreateExams = in_array($currentUserRole, ['admin', 'principal', 'vice-principal', 'hod']);
-                if ($canCreateExams): 
-                ?>
-                <a href="#" class="nav-link" data-module="exammanagement">
-                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-                    </svg>
-                    Add Exam
-                </a>
-                <?php endif; ?>
                 <button id="exportReports" class="w-full flex items-center justify-center px-4 py-2.5 border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition font-medium text-sm">
                     <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
@@ -5721,6 +6032,91 @@ if ($action) {
 <script>
 // CSRF token from PHP session
 const CSRF_TOKEN = '<?= esc($_SESSION['csrf_token']) ?>';
+
+// Toggle Exam Submenu
+function toggleExamSubmenu(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const submenu = document.getElementById('examSubmenu');
+    const icon = document.getElementById('examSubmenuIcon');
+    
+    if (submenu.classList.contains('hidden')) {
+        submenu.classList.remove('hidden');
+        icon.style.transform = 'rotate(180deg)';
+    } else {
+        submenu.classList.add('hidden');
+        icon.style.transform = 'rotate(0deg)';
+    }
+}
+
+// Switch Dashboard Function
+function switchDashboard(dashboard) {
+    // Show loading state
+    const btn = event.target.closest('button');
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<svg class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+    
+    // Make AJAX request to switch dashboard
+    $.ajax({
+        url: 'switch_dashboard.php',
+        method: 'POST',
+        data: {
+            dashboard: dashboard,
+            csrf_token: CSRF_TOKEN
+        },
+        dataType: 'json',
+        success: function(response) {
+            if (response.success) {
+                // Show success message briefly
+                showToast('Switching to ' + dashboard + ' dashboard...', 'success');
+                
+                // Redirect to target dashboard
+                setTimeout(function() {
+                    window.location.href = response.redirect;
+                }, 500);
+            } else {
+                // Show error message
+                showToast(response.message || 'Failed to switch dashboard', 'error');
+                btn.disabled = false;
+                btn.innerHTML = originalHTML;
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error('Dashboard switch error:', error);
+            showToast('An error occurred while switching dashboards', 'error');
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    });
+}
+
+// Toast Notification Helper
+function showToast(message, type = 'info') {
+    // Create toast element
+    const toast = document.createElement('div');
+    toast.className = `fixed top-20 right-4 z-50 px-6 py-3 rounded-lg shadow-lg text-white transform transition-all duration-300 translate-x-full ${
+        type === 'success' ? 'bg-green-500' : 
+        type === 'error' ? 'bg-red-500' : 
+        'bg-blue-500'
+    }`;
+    toast.textContent = message;
+    
+    document.body.appendChild(toast);
+    
+    // Slide in
+    setTimeout(() => {
+        toast.style.transform = 'translateX(0)';
+    }, 100);
+    
+    // Slide out and remove
+    setTimeout(() => {
+        toast.style.transform = 'translateX(150%)';
+        setTimeout(() => {
+            document.body.removeChild(toast);
+        }, 300);
+    }, 3000);
+}
 
 $(function(){
     console.log('Document ready - initializing dashboard');
@@ -5849,12 +6245,21 @@ $(function(){
 });
 
 function loadModule(module) {
-    $("#mainContent").html("<div class='p-6'>Loading...</div>");
+    console.log('Loading module:', module);
+    $("#mainContent").html("<div class='p-6'><div class='alert alert-info'><i class='bi bi-hourglass-split'></i> Loading...</div></div>");
     $.get("admin_dashboard.php", {
         action: "load_module",
         module: module
     }, function (response) {
-        $("#mainContent").html(response);
+        console.log('Module response received for:', module);
+        if (response && response.trim().length > 0) {
+            $("#mainContent").html(response);
+        } else {
+            $("#mainContent").html("<div class='p-6'><div class='alert alert-warning'><i class='bi bi-exclamation-triangle'></i> No content returned for module: " + module + "</div></div>");
+        }
+    }).fail(function(xhr, status, error) {
+        console.error('Module load failed:', module, status, error);
+        $("#mainContent").html("<div class='p-6'><div class='alert alert-danger'><i class='bi bi-x-circle'></i> Error loading module: " + module + "<br>Status: " + status + "<br>Error: " + error + "</div></div>");
     });
 }
 
