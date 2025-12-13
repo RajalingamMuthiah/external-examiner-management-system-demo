@@ -302,6 +302,9 @@ $csrfToken = get_csrf_token();
                 <div class="fw-semibold text-dark"><?= htmlspecialchars($currentUserName) ?></div>
                 <small class="text-muted"><?= htmlspecialchars($currentUserCollege) ?></small>
             </div>
+            <a href="rate_examiner.php" class="btn btn-outline-warning btn-sm">
+                <i class="bi bi-star"></i> Rate Examiners
+            </a>
             <a href="logout.php" class="btn btn-outline-danger btn-sm">
                 <i class="bi bi-box-arrow-right"></i> Logout
             </a>

@@ -2,19 +2,21 @@
 /**
  * VICE PRINCIPAL DASHBOARD - Enhanced with Security & Privacy Controls
  * ===================================================================
- * Views approved exams from other colleges and nominates faculty
+ * COORDINATOR ROLE: VP can view and manage exams from ALL colleges
  * 
  * SECURITY FEATURES:
  * - Role-based access control: Only 'vice-principal' and 'admin' roles
  * - Session validation and hijacking prevention
  * - CSRF token protection on all nominations
- * - Data privacy: VP can ONLY see their college's data
+ * - Global visibility: VP serves as exam coordinator across all colleges
  * - Input sanitization on all user inputs
  * - Security audit logging
  * 
- * PRIVACY REQUIREMENT:
- * VP at College A's data (faculty, exams, nominations) MUST NOT be visible
- * to VP at College B. All queries filtered by college_name.
+ * PRIVACY MODEL:
+ * Vice-Principal has GLOBAL access to coordinate exams across all colleges.
+ * This is intentional as VP acts as the central coordinator for multi-college
+ * exam management. All other roles (Teacher, HOD, Principal) are restricted
+ * to their own college data only.
  */
 
 require_once __DIR__ . '/includes/security.php';
@@ -163,6 +165,9 @@ if (empty($_SESSION['csrf_token'])) {
                 <div class="fw-semibold text-dark"><?= htmlspecialchars($currentUserName) ?></div>
                 <small class="text-muted"><?= htmlspecialchars($currentUserCollege) ?></small>
             </div>
+            <a href="rate_examiner.php" class="btn btn-outline-warning btn-sm">
+                <i class="bi bi-star"></i> Rate Examiners
+            </a>
             <a href="logout.php" class="btn btn-outline-danger btn-sm">
                 <i class="bi bi-box-arrow-right"></i> Logout
             </a>

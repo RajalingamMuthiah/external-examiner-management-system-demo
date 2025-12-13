@@ -280,6 +280,53 @@ class EmailNotifier {
     }
     
     /**
+     * Send examiner invitation email
+     */
+    public function sendExaminerInviteEmail($inviteeEmail, $inviteeName, $examTitle, $examDate, $examTime, $role, $dutyType, $collegeOrg, $token) {
+        $inviteURL = $this->getBaseURL() . '/invite_response.php?token=' . $token;
+        
+        // Format exam date
+        $formattedDate = date('l, F j, Y', strtotime($examDate));
+        $timeInfo = $examTime ? ' at ' . date('h:i A', strtotime($examTime)) : '';
+        
+        // Format duty type nicely
+        $dutyTypeFormatted = ucwords(str_replace('_', ' ', $dutyType));
+        
+        $content = "
+            <p>Dear <strong>{$inviteeName}</strong>,</p>
+            <p>You have been invited to serve as a <strong style='color: #667eea;'>{$role}</strong> for an upcoming examination.</p>
+            
+            <div style='background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;'>
+                <h3 style='margin-top: 0; color: #1f2937;'>📋 Exam Details</h3>
+                <p style='margin: 8px 0;'><strong>Exam:</strong> {$examTitle}</p>
+                <p style='margin: 8px 0;'><strong>Date:</strong> {$formattedDate}{$timeInfo}</p>
+                <p style='margin: 8px 0;'><strong>Your Role:</strong> {$role}</p>
+                <p style='margin: 8px 0;'><strong>Duty Type:</strong> {$dutyTypeFormatted}</p>
+                <p style='margin: 8px 0;'><strong>Requesting College:</strong> {$collegeOrg}</p>
+            </div>
+            
+            <p>Please review the exam details and confirm your availability by clicking the button below:</p>
+            
+            <div style='background-color: #dbeafe; border-left: 4px solid #3b82f6; padding: 15px; margin: 20px 0;'>
+                <p style='margin: 0; color: #1e40af; font-size: 13px;'>
+                    ℹ️ <strong>Important:</strong><br>
+                    This invitation link is unique and secure. You can accept or decline the invitation by clicking the button below.
+                    No account registration is required to respond.
+                </p>
+            </div>
+        ";
+        
+        $button = [
+            'text' => '👉 Respond to Invitation',
+            'url' => $inviteURL
+        ];
+        
+        $html = $this->getEmailTemplate('Examiner Invitation - ' . $examTitle, $content, $button);
+        
+        return $this->send($inviteeEmail, 'Invitation: ' . $role . ' for ' . $examTitle, $html);
+    }
+    
+    /**
      * Get base URL of the application
      */
     private function getBaseURL() {
@@ -331,6 +378,19 @@ function sendEmail($type, $userEmail, $data) {
                 $userEmail,
                 $data['name'],
                 $data['reset_token']
+            );
+            
+        case 'examiner_invite':
+            return $notifier->sendExaminerInviteEmail(
+                $userEmail,
+                $data['name'],
+                $data['exam_title'],
+                $data['exam_date'],
+                $data['exam_time'] ?? null,
+                $data['role'],
+                $data['duty_type'],
+                $data['college'],
+                $data['token']
             );
             
         default:

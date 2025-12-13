@@ -397,6 +397,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == '1' && isset($_GET['module'])) {
           <li><a class="dropdown-item" href="verify_users.php"><i class="bi bi-person-check me-2"></i>Verify Faculty</a></li>
           <li><a class="dropdown-item" href="manage_faculty.php"><i class="bi bi-people me-2"></i>Manage Faculty</a></li>
           <li><a class="dropdown-item" href="create_exam.php"><i class="bi bi-plus-circle me-2"></i>Schedule Exam</a></li>
+          <li><a class="dropdown-item" href="rate_examiner.php"><i class="bi bi-star me-2 text-warning"></i>Rate Examiners</a></li>
           <li><hr class="dropdown-divider"></li>
           <li><a class="dropdown-item text-danger" href="logout.php"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
         </ul>

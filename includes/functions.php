@@ -644,11 +644,11 @@ function getVisibleExamsForUser($pdo, $userId, $role, $collegeId = null, $depart
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         }
         
-        if ($role === 'principal' || $role === 'vice-principal' || $role === 'vice_principal') {
-            // Principal/VP see all exams for their college
+        if ($role === 'principal') {
+            // Principal sees exams for their college only
             if (!$collegeId) {
                 // Fallback: get college from user record if not provided
-                $userStmt = $pdo->prepare("SELECT college_id FROM users WHERE id = ?");
+                $userStmt = $pdo->prepare("SELECT college_id FROM users WHERE user_id = ?");
                 $userStmt->execute([$userId]);
                 $userData = $userStmt->fetch(PDO::FETCH_ASSOC);
                 $collegeId = $userData['college_id'] ?? null;
@@ -658,11 +658,25 @@ function getVisibleExamsForUser($pdo, $userId, $role, $collegeId = null, $depart
                            u.name as created_by_name,
                            u.college_name as creator_college
                     FROM exams e
-                    LEFT JOIN users u ON e.created_by = u.id
+                    LEFT JOIN users u ON e.created_by = u.user_id
                     WHERE e.college_id = ?
                     ORDER BY e.exam_date DESC, e.created_at DESC";
             $stmt = $pdo->prepare($sql);
             $stmt->execute([$collegeId]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+        
+        if ($role === 'vice-principal' || $role === 'vice_principal') {
+            // Vice-Principal is a COORDINATOR - sees ALL colleges for coordination purposes
+            $sql = "SELECT e.*, 
+                           u.name as created_by_name,
+                           u.college_name as creator_college,
+                           c.college_name as exam_college_name
+                    FROM exams e
+                    LEFT JOIN users u ON e.created_by = u.user_id
+                    LEFT JOIN colleges c ON e.college_id = c.college_id
+                    ORDER BY e.exam_date DESC, e.created_at DESC";
+            $stmt = $pdo->query($sql);
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         }
         
@@ -1200,9 +1214,18 @@ function inviteExaminer($pdo, $examId, $inviteeIdentifier, $role, $createdBy, $i
         $stmt->execute([$examId, $inviteeUserId, $inviteeEmail, $inviteeName, $role, $token, $createdBy, $isExternal, $dutyType]);
         $inviteId = $pdo->lastInsertId();
         
-        // Send notification
+        // Get college name for email
+        $collegeStmt = $pdo->prepare("
+            SELECT u.college_name 
+            FROM users u 
+            WHERE u.id = ?
+        ");
+        $collegeStmt->execute([$createdBy]);
+        $collegeData = $collegeStmt->fetch(PDO::FETCH_ASSOC);
+        $collegeName = $collegeData['college_name'] ?? 'Unknown College';
+        
+        // Send in-app notification for internal users
         if ($inviteeUserId) {
-            // Internal user - in-app notification
             sendNotification($pdo, $inviteeUserId, 'exam_invite', [
                 'exam_id' => $examId,
                 'exam_title' => $exam['title'],
@@ -1213,9 +1236,18 @@ function inviteExaminer($pdo, $examId, $inviteeIdentifier, $role, $createdBy, $i
             ]);
         }
         
-        // Send email with invite link (to be implemented with email service)
-        $inviteLink = "http://" . ($_SERVER['HTTP_HOST'] ?? 'localhost') . "/external/eems/invite_response.php?token=" . $token;
-        // TODO: Implement email sending with inviteLink
+        // Send email with invite link
+        require_once __DIR__ . '/email.php';
+        $emailSent = sendEmail('examiner_invite', $inviteeEmail, [
+            'name' => $inviteeName,
+            'exam_title' => $exam['title'],
+            'exam_date' => $exam['exam_date'],
+            'exam_time' => $exam['start_time'] ?? null,
+            'role' => $role,
+            'duty_type' => $dutyType,
+            'college' => $collegeName,
+            'token' => $token
+        ]);
         
         // Audit log
         logAudit($pdo, 'exam_invite', $inviteId, 'create', $createdBy, [
@@ -1223,15 +1255,16 @@ function inviteExaminer($pdo, $examId, $inviteeIdentifier, $role, $createdBy, $i
             'exam_title' => $exam['title'],
             'invitee_email' => $inviteeEmail,
             'role' => $role,
-            'is_external' => $inviteeUserId === null
+            'is_external' => $inviteeUserId === null,
+            'email_sent' => $emailSent
         ]);
         
         return [
             'success' => true,
-            'message' => 'Invitation sent successfully',
+            'message' => 'Invitation sent successfully' . ($emailSent ? ' (email delivered)' : ' (email pending)'),
             'token' => $token,
             'invite_id' => $inviteId,
-            'invite_link' => $inviteLink
+            'email_sent' => $emailSent
         ];
         
     } catch (PDOException $e) {
@@ -1593,6 +1626,88 @@ function markNotificationRead($pdo, $notificationId, $userId) {
         return true;
     } catch (PDOException $e) {
         error_log('markNotificationRead error: ' . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Get college filter SQL for privacy enforcement
+ * Generates WHERE clause to filter queries by college based on user role
+ * 
+ * @param string $role User's role (normalized)
+ * @param int $collegeId User's college ID
+ * @param string $tableAlias Table alias in query (e.g., 'e' for exams table)
+ * @return string SQL WHERE clause fragment (without WHERE keyword)
+ * 
+ * Usage Examples:
+ * - Teacher: "e.college_id = 5"
+ * - HOD: "e.college_id = 5"  
+ * - Principal: "e.college_id = 5"
+ * - Vice-Principal: "1=1" (can see all colleges)
+ * - Admin: "1=1" (can see all colleges)
+ */
+function getCollegeFilterSQL($role, $collegeId, $tableAlias = 'e') {
+    $normalizedRole = normalize_role($role);
+    
+    // VP and Admin can see ALL colleges
+    if (in_array($normalizedRole, ['vice_principal', 'admin'])) {
+        return '1=1';
+    }
+    
+    // Teacher, HOD, Principal: only their own college
+    if (in_array($normalizedRole, ['teacher', 'hod', 'principal'])) {
+        return "{$tableAlias}.college_id = " . intval($collegeId);
+    }
+    
+    // Default: restrict to user's college
+    return "{$tableAlias}.college_id = " . intval($collegeId);
+}
+
+/**
+ * Check if user can access exam (privacy check)
+ * Validates whether a user has permission to view/modify an exam
+ * 
+ * @param PDO $pdo Database connection
+ * @param int $examId Exam ID to check
+ * @param int $userId User ID requesting access
+ * @param string $role User's role
+ * @param int $collegeId User's college ID
+ * @return bool True if user can access, false otherwise
+ */
+function canAccessExam($pdo, $examId, $userId, $role, $collegeId) {
+    $normalizedRole = normalize_role($role);
+    
+    // Admin and VP can access all exams
+    if (in_array($normalizedRole, ['admin', 'vice_principal'])) {
+        return true;
+    }
+    
+    try {
+        // Check if exam belongs to user's college
+        $stmt = $pdo->prepare("SELECT college_id FROM exams WHERE exam_id = ?");
+        $stmt->execute([$examId]);
+        $exam = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$exam) {
+            return false;
+        }
+        
+        // Teacher, HOD, Principal: can only access own college exams
+        if ($exam['college_id'] == $collegeId) {
+            return true;
+        }
+        
+        // Check if user is assigned as examiner (cross-college assignments allowed)
+        $stmt = $pdo->prepare("
+            SELECT assignment_id FROM exam_assignments 
+            WHERE exam_id = ? AND user_id = ?
+        ");
+        $stmt->execute([$examId, $userId]);
+        
+        return (bool)$stmt->fetch();
+        
+    } catch (PDOException $e) {
+        error_log('canAccessExam error: ' . $e->getMessage());
         return false;
     }
 }

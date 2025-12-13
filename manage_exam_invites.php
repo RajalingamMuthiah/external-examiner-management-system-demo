@@ -94,8 +94,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 exit;
             }
             
-            // Get invite details
-            $stmt = $pdo->prepare("SELECT * FROM exam_invites WHERE id = ?");
+            // Get invite details with exam info
+            $stmt = $pdo->prepare("
+                SELECT ei.*, e.title as exam_title, e.exam_date, e.start_time,
+                       u.college_name as inviter_college
+                FROM exam_invites ei
+                JOIN exams e ON ei.exam_id = e.id
+                LEFT JOIN users u ON ei.invited_by = u.id
+                WHERE ei.id = ?
+            ");
             $stmt->execute([$inviteId]);
             $invite = $stmt->fetch(PDO::FETCH_ASSOC);
             
@@ -104,20 +111,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 exit;
             }
             
-            // Resend logic: Generate new token and update
+            // Generate new token
             $newToken = bin2hex(random_bytes(32));
             $updateStmt = $pdo->prepare("UPDATE exam_invites SET token = ?, created_at = NOW() WHERE id = ?");
             $updateStmt->execute([$newToken, $inviteId]);
             
-            // TODO: Send email with new token
-            // For now, just return success
+            // Resend email
+            require_once __DIR__ . '/includes/email.php';
+            $emailSent = sendEmail('examiner_invite', $invite['email'], [
+                'name' => $invite['name'],
+                'exam_title' => $invite['exam_title'],
+                'exam_date' => $invite['exam_date'],
+                'exam_time' => $invite['start_time'] ?? null,
+                'role' => $invite['role'],
+                'duty_type' => $invite['duty_type'],
+                'college' => $invite['inviter_college'] ?? 'Unknown College',
+                'token' => $newToken
+            ]);
             
             logAudit($pdo, 'exam_invite', $inviteId, 'resend', $currentUserId, [
                 'email' => $invite['email'],
-                'exam_id' => $invite['exam_id']
+                'exam_id' => $invite['exam_id'],
+                'email_sent' => $emailSent
             ]);
             
-            echo json_encode(['success' => true, 'message' => 'Invitation resent successfully']);
+            $message = 'Invitation resent successfully';
+            if ($emailSent) {
+                $message .= ' (email delivered)';
+            } else {
+                $message .= ' (email pending - check email configuration)';
+            }
+            
+            echo json_encode(['success' => true, 'message' => $message]);
             exit;
         }
         
