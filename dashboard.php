@@ -295,13 +295,13 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == '1' && isset($_GET['module'])) {
     * { box-sizing: border-box; }
     body {
       font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+      background: linear-gradient(135deg, #f9f8faff 0%, #e9ecef 100%);
       margin: 0;
       padding: 0;
     }
     .top-navbar {
-      background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      box-shadow: 0 4px 6px rgba(136, 81, 246, 0.1);
       padding: 1rem 2rem;
       position: sticky;
       top: 0;

@@ -15,28 +15,6 @@ $currentUserCollege = $_SESSION['college_id'] ?? null;
 $currentUserDept = $_SESSION['department_id'] ?? null;
 ?>
 <?php
-/**
- * admin_dashboard.php
- *
- * Single-file Admin Dashboard template for an Education/Exam Management System.
- * - Session auth + admin role restriction
- * - PDO prepared statements for DB access
- * - Bootstrap 5 frontend with AJAX-backed tab loading
- * - Permission management (assign/revoke subordinate dashboard access)
- *
- * NOTE: Update DB credentials below to match your environment.
- * Place this file in your webroot (e.g., c:\xampp\htdocs\examiner\)
- * and ensure your login system sets $_SESSION['user_id'] and $_SESSION['role'].
- *
- * Security notes:
- *  - This file demonstrates secure patterns: prepared statements, CSRF token, output escaping.
- *  - Integrate with your real login flow to set session values and a login page at login.php.
- *
- * Author: Generated template
- * Date: 2025-11-12
- */
-
-// Use centralized auth/session helpers
 require_once __DIR__ . '/includes/functions.php';
 start_secure_session();
 require_login();
@@ -6049,47 +6027,9 @@ function toggleExamSubmenu(e) {
     }
 }
 
-// Switch Dashboard Function
-function switchDashboard(dashboard) {
-    // Show loading state
-    const btn = event.target.closest('button');
-    const originalHTML = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<svg class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
-    
-    // Make AJAX request to switch dashboard
-    $.ajax({
-        url: 'switch_dashboard.php',
-        method: 'POST',
-        data: {
-            dashboard: dashboard,
-            csrf_token: CSRF_TOKEN
-        },
-        dataType: 'json',
-        success: function(response) {
-            if (response.success) {
-                // Show success message briefly
-                showToast('Switching to ' + dashboard + ' dashboard...', 'success');
-                
-                // Redirect to target dashboard
-                setTimeout(function() {
-                    window.location.href = response.redirect;
-                }, 500);
-            } else {
-                // Show error message
-                showToast(response.message || 'Failed to switch dashboard', 'error');
-                btn.disabled = false;
-                btn.innerHTML = originalHTML;
-            }
-        },
-        error: function(xhr, status, error) {
-            console.error('Dashboard switch error:', error);
-            showToast('An error occurred while switching dashboards', 'error');
-            btn.disabled = false;
-            btn.innerHTML = originalHTML;
-        }
-    });
-}
+// Switch Dashboard Function - REMOVED
+// Dashboard navigation now uses direct href links to prevent redirect loops
+// The old switch_dashboard.php AJAX approach was causing admin->teacher redirect issues
 
 // Toast Notification Helper
 function showToast(message, type = 'info') {
