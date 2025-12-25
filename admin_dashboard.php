@@ -5,29 +5,27 @@ header('Cache-Control: no-cache, no-store, must-revalidate');
 header('Pragma: no-cache');
 header('Expires: 0');
 
-// ...session and DB setup...
+// Initialize security and database
+require_once __DIR__ . '/includes/security.php';
 require_once __DIR__ . '/includes/functions.php';
+require_once __DIR__ . '/config/db.php';
+
+// Require login and proper role BEFORE accessing any session variables
+require_auth();
+// Allow admins, principals, vice principals, and teachers to access this dashboard
+// Teachers can only access the "Available Exams" module for self-assignment
+require_role(['admin', 'principal', 'vice-principal', 'faculty', 'teacher', 'hod']);
+
 // Ensure currentUserRole is always defined for permission checks
 $currentUserRole = normalize_role($_SESSION['role'] ?? 'admin');
 // Privacy context for all admin dashboard logic
 $currentUserId = $_SESSION['user_id'] ?? 0;
 $currentUserCollege = $_SESSION['college_id'] ?? null;
 $currentUserDept = $_SESSION['department_id'] ?? null;
-?>
-<?php
-require_once __DIR__ . '/includes/functions.php';
-start_secure_session();
-require_login();
-// Allow admins, principals, vice principals, and teachers to access this dashboard
-// Teachers can only access the "Available Exams" module for self-assignment
-require_role(['admin', 'principal', 'vice-principal', 'faculty', 'teacher', 'hod']);
 
 // Normalize display name and current admin id
 $_SESSION['name'] = $_SESSION['name'] ?? $_SESSION['user_name'] ?? 'Admin';
 $adminId = (int) ($_SESSION['user_id'] ?? 0);
-
-// DB Connection (PDO)
-require_once __DIR__ . '/config/db.php';
 
 // Ensure a CSRF token exists for POST actions initiated via JS
 if (empty($_SESSION['csrf_token'])) {
