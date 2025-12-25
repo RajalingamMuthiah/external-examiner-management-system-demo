@@ -36,12 +36,7 @@ test github raja
   fd mvms jnvjsn
 
 
-  Arjun is a Indian Superstar___So Called Ayappaaaaa\
-
-
-  ugufufuruwjbekhbkjvbkjebkjvbj
-
-
-  kaviya is eli 
+  Arjun is a Indian Superstar___So Called Ayappaaaaa
+  
  
   
