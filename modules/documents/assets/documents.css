@@ -1,0 +1,3 @@
+/* Documents module styles */
+.table td, .table th { vertical-align: middle; }
+.navbar .form-select { min-width: 140px; }

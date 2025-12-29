@@ -11,38 +11,86 @@
 
 require_once __DIR__ . '/config/db.php';
 
+// Infer DB name from config/db.php
+$dbName = isset($db) ? $db : 'eems';
+
 $message = '';
 $status = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $status = 'processing';
-    
-    // Check if file was uploaded
-    if (!isset($_FILES['sql_file']) || $_FILES['sql_file']['error'] !== UPLOAD_ERR_OK) {
-        $message = 'Please upload a valid SQL file';
+
+    // Ensure MySQL is reachable and database exists
+    try {
+        $pdo->exec("CREATE DATABASE IF NOT EXISTS `$dbName` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+    } catch (Exception $e) {
+        $message = 'Error creating database: ' . $e->getMessage();
         $status = 'error';
-    } else {
-        try {
-            $filePath = $_FILES['sql_file']['tmp_name'];
-            $fileContent = file_get_contents($filePath);
-            
-            // Split by semicolon and execute each statement
-            $statements = array_filter(array_map('trim', explode(';', $fileContent)));
-            
-            $count = 0;
-            foreach ($statements as $statement) {
-                if (!empty($statement)) {
-                    $pdo->exec($statement);
-                    $count++;
-                }
-            }
-            
-            $message = "✓ Database restored successfully! Executed $count SQL statements.";
-            $status = 'success';
-            
-        } catch (Exception $e) {
-            $message = 'Error: ' . $e->getMessage();
+    }
+
+    // Check if file was uploaded
+    if ($status !== 'error') {
+        if (!isset($_FILES['sql_file']) || $_FILES['sql_file']['error'] !== UPLOAD_ERR_OK) {
+            $message = 'Please upload a valid .sql backup file exported using mysqldump.';
             $status = 'error';
+        } else {
+            try {
+                // Persist upload to a known path
+                $uploadsDir = __DIR__ . '/db/uploads';
+                if (!is_dir($uploadsDir)) {
+                    @mkdir($uploadsDir, 0775, true);
+                }
+                $targetPath = $uploadsDir . '/' . (basename($_FILES['sql_file']['name']) ?: ('backup_' . date('Ymd_His') . '.sql'));
+                if (!move_uploaded_file($_FILES['sql_file']['tmp_name'], $targetPath)) {
+                    throw new RuntimeException('Failed to move uploaded file.');
+                }
+
+                // Prefer MySQL CLI import to handle complex dumps (triggers, procedures, delimiters)
+                $mysqlPathCandidates = [
+                    'C:\\xampp\\mysql\\bin\\mysql.exe',
+                    'C:\\Program Files\\MySQL\\MySQL Server\\bin\\mysql.exe',
+                    'mysql' // fall back to PATH
+                ];
+                $mysqlBin = null;
+                foreach ($mysqlPathCandidates as $candidate) {
+                    // file_exists works for absolute paths; for 'mysql' on PATH we just assign if nothing else found
+                    if ($candidate === 'mysql') {
+                        if ($mysqlBin === null) $mysqlBin = $candidate;
+                        break;
+                    }
+                    if (file_exists($candidate)) { $mysqlBin = $candidate; break; }
+                }
+
+                if ($mysqlBin === null) {
+                    throw new RuntimeException('MySQL client not found. Ensure XAMPP/MySQL is installed.');
+                }
+
+                // Build a safe command using "source" to avoid shell redirection quirks on Windows
+                // Also set binary-mode to handle NULL bytes safely
+                $cmd = '"' . $mysqlBin . '" --binary-mode=1 -u ' . escapeshellarg($user ?? 'root') . ' ' . escapeshellarg($dbName) . ' -e ' . escapeshellarg('source ' . $targetPath);
+
+                // Execute and capture output
+                $output = [];
+                $exitCode = 0;
+                @exec($cmd . ' 2>&1', $output, $exitCode);
+
+                if ($exitCode !== 0) {
+                    // Provide a concise error plus first lines of output for context
+                    $preview = implode("\n", array_slice($output, 0, 5));
+                    throw new RuntimeException('MySQL import failed. Exit code ' . $exitCode . ".\n" . $preview);
+                }
+
+                // Basic verification: count tables
+                $countStmt = $pdo->prepare('SELECT COUNT(*) AS cnt FROM information_schema.tables WHERE table_schema = :db');
+                $countStmt->execute([':db' => $dbName]);
+                $tableCount = (int)($countStmt->fetchColumn() ?: 0);
+
+                $message = '✓ Database restored successfully! Tables found: ' . $tableCount . '.';
+                $status = 'success';
+            } catch (Exception $e) {
+                $message = 'Error: ' . $e->getMessage();
+                $status = 'error';
+            }
         }
     }
 }
@@ -95,7 +143,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <span class="step-number">1</span>
                 <strong>Get SQL File from PC 1</strong>
                 <p style="margin-top: 5px; color: #666; font-size: 14px;">
-                    On PC 1, visit: <code style="background: #f0f0f0; padding: 2px 5px;">http://localhost/eems/backup_complete.php</code> and download the SQL file
+                    On PC 1, export using mysqldump for best compatibility:<br>
+                    <code style="background: #f0f0f0; padding: 2px 5px;">"C:\xampp\mysql\bin\mysqldump.exe" -u root --single-transaction --routines --events --triggers --default-character-set=utf8mb4 eems &gt; C:\xampp\htdocs\eems\db\eems_full_backup.sql</code>
                 </p>
             </div>
             
@@ -105,7 +154,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <strong>Upload SQL File</strong>
                 <div class="form-group" style="margin-top: 10px;">
                     <input type="file" name="sql_file" accept=".sql" required>
-                    <p style="margin-top: 5px; color: #666; font-size: 13px;">Select the .sql file downloaded from PC 1</p>
+                    <p style="margin-top: 5px; color: #666; font-size: 13px;">Select the .sql file from PC 1 (mysqldump output)</p>
                 </div>
             </div>
             

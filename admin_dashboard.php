@@ -5882,6 +5882,14 @@ if ($action) {
                             <span class="ml-auto inline-flex items-center justify-center w-6 h-6 text-xs font-bold rounded-full bg-red-500 text-white animate-pulse"><?= (int)$PENDING_TOTAL ?></span>
                             <?php endif; ?>
                         </a>
+
+                        <!-- Documents -->
+                        <a href="/documents" class="sidebar-link flex items-center px-4 py-3 text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 rounded-xl text-sm font-medium transition" data-module="documents">
+                            <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h10M7 11h10M7 15h6M5 5a2 2 0 012-2h8l4 4v10a2 2 0 01-2 2H7a2 2 0 01-2-2V5z" />
+                            </svg>
+                            Documents
+                        </a>
                         
                         <!-- Available Exams for Teachers (Conditional) -->
                         <?php 

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # EEMS - Exam Examiner Management System
 
 A comprehensive web-based examination management system designed for educational institutions to manage exams, faculty assignments, and examiner nominations efficiently.
@@ -354,3 +355,7 @@ php diagnostic.php
 ---
 
 **Made with ❤️ for Educational Institutions**
+=======
+# EEMS-Dashboard-External-Examiner-Management-System-Demo
+PHP | MySQL | Multi-Role Dashboards Educational platform with Admin/Principal/Teacher/VP/HOD dashboards for exam scheduling and examiner assignment. 🔒 personal Confidential - Demo available on request someof the demo file has been uploaded to this github
+>>>>>>> 66de4831c844d6ea8dfe99af1eeca2b9437e856b
